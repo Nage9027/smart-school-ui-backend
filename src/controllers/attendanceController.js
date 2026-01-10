@@ -1,9 +1,9 @@
 import Attendance from '../models/Attendance.js';
 import Student from '../models/Student.js';
+import Holiday from '../models/Holiday.js';
 
 /**
  * Helper: Generates a UTC date range for a single day.
- * Ensures that time-of-day differences don't interfere with date matching.
  */
 const getDayRange = (dateString) => {
   const date = new Date(dateString);
@@ -16,57 +16,40 @@ const getDayRange = (dateString) => {
 
 /* =========================================================
    GET STUDENTS WITH ATTENDANCE STATUS
-   Handles: Specific Class/Section OR "All"
    Route: GET /api/admin/attendance/by-class
 ========================================================= */
 export const getAttendanceByClass = async (req, res) => {
   try {
     const { className, section, date } = req.query;
 
-    console.log(`🔍 [REQUEST] Fetching: Class="${className}", Section="${section}", Date="${date}"`);
-
-    // 1. Mandatory Validation (Section is optional to support "All Sections")
     if (!className || !date) {
       return res.status(400).json({ message: "Class and Date are required." });
     }
 
     const { start, end } = getDayRange(date);
 
-    // 2. Build flexible Attendance Search Query
     const attendanceQuery = {
       date: { $gte: start, $lte: end }
     };
 
-    // Filter by className unless "all" is selected
     if (className !== 'all') {
       attendanceQuery.className = className;
     }
 
-    // Filter by section if provided and not "all"
     if (section && section !== 'all' && section.trim() !== "") {
       attendanceQuery.section = section;
     }
 
-    // 3. Find attendance records
     const attendanceRecords = await Attendance.find(attendanceQuery).lean();
-
-    console.log(`✅ [DB RESULT] Found ${attendanceRecords.length} attendance marks.`);
-
-    /**
-     * Note: The Frontend now handles the merging with the Student list locally.
-     * We return the raw attendance records for the frontend to map via studentId.
-     */
     res.status(200).json(attendanceRecords);
-
   } catch (error) {
-    console.error("❌ [SERVER ERROR] Fetch Attendance Failed:", error);
+    console.error("❌ Fetch Attendance Failed:", error);
     res.status(500).json({ message: "Internal Server Error", error: error.message });
   }
 };
 
 /* =========================================================
    MARK ATTENDANCE (BULK UPSERT)
-   Handles multiple students at once. Updates if exists, inserts if new.
    Route: POST /api/admin/attendance/mark
 ========================================================= */
 export const markAttendance = async (req, res) => {
@@ -80,48 +63,121 @@ export const markAttendance = async (req, res) => {
     const attendanceDate = new Date(date);
     attendanceDate.setUTCHours(0, 0, 0, 0);
 
-    // Prepare Bulk Operations using updateOne with upsert: true
-    const bulkOps = attendance.map((record) => ({
-      updateOne: {
-        filter: { 
-          studentId: record.studentId, 
-          date: attendanceDate 
-        },
-        update: {
-          $set: {
-            studentId: record.studentId,
-            date: attendanceDate,
-            // Fallback to top-level class/section if not provided per-student
-            className: record.className || className,
-            section: record.section || section,
-            sessions: {
-              morning: record.morning,
-              afternoon: record.afternoon
-            },
-            markedBy: req.user._id,
-            markedRole: req.user.role || 'admin'
-          }
-        },
-        upsert: true
+    const bulkOps = attendance.map((record) => {
+      const updateFields = {
+        studentId: record.studentId,
+        date: attendanceDate,
+        className: record.className || className,
+        section: record.section || section,
+        markedBy: req.user._id,
+        markedRole: req.user.role || 'admin'
+      };
+
+      if (record.morning !== undefined && record.morning !== null) {
+        updateFields["sessions.morning"] = String(record.morning);
       }
-    }));
+      if (record.afternoon !== undefined && record.afternoon !== null) {
+        updateFields["sessions.afternoon"] = String(record.afternoon);
+      }
+
+      return {
+        updateOne: {
+          filter: { studentId: record.studentId, date: attendanceDate },
+          update: { $set: updateFields },
+          upsert: true
+        }
+      };
+    });
 
     if (bulkOps.length > 0) {
       const result = await Attendance.bulkWrite(bulkOps);
-      console.log(`✅ [BULK SAVE] Upserted ${result.upsertedCount}, Updated ${result.modifiedCount}`);
+      console.log(`✅ Bulk Save Success: ${result.modifiedCount} modified`);
     }
 
     res.status(200).json({ message: "Attendance saved successfully." });
-
   } catch (error) {
-    console.error("❌ [SERVER ERROR] Mark Attendance Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* =========================================================
+   MARK A DAY AS A HOLIDAY
+   Route: POST /api/admin/attendance/mark-holiday
+========================================================= */
+export const markHoliday = async (req, res) => {
+  try {
+    const { date, reason } = req.body;
+    const holidayDate = new Date(date);
+    holidayDate.setUTCHours(0, 0, 0, 0);
+
+    await Holiday.findOneAndUpdate(
+      { date: holidayDate },
+      { reason },
+      { upsert: true, new: true }
+    );
+    res.status(200).json({ message: "Holiday marked successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* =========================================================
+   CHECK IF DATE IS A HOLIDAY (NEW - FIXES SYNTAX ERROR)
+   Route: GET /api/admin/attendance/holiday-status
+========================================================= */
+export const getHolidayStatus = async (req, res) => {
+  try {
+    const { date } = req.query;
+    if (!date) return res.status(400).json({ message: "Date required" });
+
+    const holidayDate = new Date(date);
+    holidayDate.setUTCHours(0, 0, 0, 0);
+
+    const holiday = await Holiday.findOne({ date: holidayDate });
+
+    if (holiday) {
+      return res.status(200).json({ isHoliday: true, reason: holiday.reason });
+    }
+
+    res.status(200).json({ isHoliday: false, reason: "" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* =========================================================
+   CALCULATE WORKING DAYS IN A MONTH
+   Route: GET /api/admin/attendance/working-days
+========================================================= */
+export const getWorkingDaysCount = async (req, res) => {
+  try {
+    const { month, year } = req.query; 
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+
+    const holidays = await Holiday.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+
+    let workingDays = 0;
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dayOfWeek = d.getDay();
+      const isSunday = (dayOfWeek === 0);
+      const isHoliday = holidays.some(h => h.date.getTime() === d.getTime());
+
+      if (!isSunday && !isHoliday) {
+        workingDays++;
+      }
+    }
+
+    res.status(200).json({ workingDays });
+  } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
 /* =========================================================
    GET ATTENDANCE SUMMARY
-   Calculates stats for Specific Section OR "All Sections"
    Route: GET /api/admin/attendance/summary
 ========================================================= */
 export const getAttendanceSummary = async (req, res) => {
@@ -133,45 +189,27 @@ export const getAttendanceSummary = async (req, res) => {
     }
 
     const { start, end } = getDayRange(date);
-
-    // 1. Build Dynamic Student Query for correct count (matches Students page logic)
     const studentQuery = { status: { $ne: "deleted" } };
     
     if (className !== 'all') {
-      // Handles both "10" and "10th Class" formats using Regex if necessary
       const classRegex = new RegExp(`^${className}`, 'i');
-      
       if (section && section !== 'all' && section.trim() !== "") {
-        // Specific section: LKG-A
-        studentQuery.$or = [
-          { className: className, section: section },
-          { class: className, section: section },
-          { className: `${className}-${section}` }
-        ];
+        studentQuery["class.className"] = className;
+        studentQuery["class.section"] = section;
       } else {
-        // Class-wide: All sections (LKG-A, LKG-B, etc.)
-        studentQuery.$or = [
-          { className: classRegex },
-          { class: classRegex },
-          { className: new RegExp(`^${className}-`, 'i') }
-        ];
+        studentQuery["class.className"] = classRegex;
       }
     }
 
     const totalStudents = await Student.countDocuments(studentQuery);
-
     if (totalStudents === 0) {
-      return res.status(200).json({
-        totalStudents: 0, present: 0, halfDay: 0, absent: 0, attendancePercentage: 0
-      });
+      return res.status(200).json({ totalStudents: 0, present: 0, halfDay: 0, absent: 0, attendancePercentage: 0 });
     }
 
-    // 2. Build Attendance Match Stage for Aggregation
     const matchStage = { date: { $gte: start, $lte: end } };
     if (className !== 'all') matchStage.className = className;
     if (section && section !== 'all' && section.trim() !== "") matchStage.section = section;
 
-    // 3. Aggregate Attendance Metrics
     const stats = await Attendance.aggregate([
       { $match: matchStage },
       {
@@ -179,7 +217,14 @@ export const getAttendanceSummary = async (req, res) => {
           _id: null,
           fullDayPresent: {
             $sum: { 
-              $cond: [{ $and: [{ $eq: ["$sessions.morning", true] }, { $eq: ["$sessions.afternoon", true] }] }, 1, 0] 
+              $cond: [
+                { 
+                  $and: [
+                    { $or: [{ $eq: ["$sessions.morning", "true"] }, { $eq: ["$sessions.morning", true] }] },
+                    { $or: [{ $eq: ["$sessions.afternoon", "true"] }, { $eq: ["$sessions.afternoon", true] }] }
+                  ] 
+                }, 1, 0
+              ] 
             }
           },
           halfDayPresent: {
@@ -187,8 +232,18 @@ export const getAttendanceSummary = async (req, res) => {
               $cond: [
                 { 
                   $or: [
-                    { $and: [{ $eq: ["$sessions.morning", true] }, { $eq: ["$sessions.afternoon", false] }] },
-                    { $and: [{ $eq: ["$sessions.morning", false] }, { $eq: ["$sessions.afternoon", true] }] }
+                    { 
+                      $and: [
+                        { $or: [{ $eq: ["$sessions.morning", "true"] }, { $eq: ["$sessions.morning", true] }] },
+                        { $and: [{ $ne: ["$sessions.afternoon", "true"] }, { $ne: ["$sessions.afternoon", true] }] }
+                      ] 
+                    },
+                    { 
+                      $and: [
+                        { $or: [{ $eq: ["$sessions.afternoon", "true"] }, { $eq: ["$sessions.afternoon", true] }] },
+                        { $and: [{ $ne: ["$sessions.morning", "true"] }, { $ne: ["$sessions.morning", true] }] }
+                      ] 
+                    }
                   ]
                 }, 1, 0
               ]
@@ -199,10 +254,7 @@ export const getAttendanceSummary = async (req, res) => {
     ]);
 
     const data = stats[0] || { fullDayPresent: 0, halfDayPresent: 0 };
-    
-    // 4. Final Stat Calculations
     const absent = Math.max(0, totalStudents - (data.fullDayPresent + data.halfDayPresent));
-    // Weighting: Full day = 1, Half day = 0.5
     const score = data.fullDayPresent + (data.halfDayPresent * 0.5);
     const percentage = ((score / totalStudents) * 100).toFixed(1);
 
@@ -215,7 +267,6 @@ export const getAttendanceSummary = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ [SERVER ERROR] Summary Error:", error);
     res.status(500).json({ message: "Failed to fetch summary." });
   }
 };

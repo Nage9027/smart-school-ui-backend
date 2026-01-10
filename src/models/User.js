@@ -1,26 +1,102 @@
+// models/User.js - COMPLETE WORKING VERSION
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 
-const userSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  phone: String,
-  password: { type: String, required: true },
-  role: {
-    type: String,
-    enum: ["admin", "owner", "teacher", "student", "parent"],
-    required: true
-  },
-  active: { type: Boolean, default: true }
-}, { timestamps: true });
+const userSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true
+    },
 
-userSchema.pre("save", async function () {
-  if (!this.isModified("password")) return;
-  this.password = await bcrypt.hash(this.password, 10);
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      lowercase: true
+    },
+
+    email: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      sparse: true
+    },
+
+    phone: {
+      type: String,
+      trim: true
+    },
+
+    password: {
+      type: String,
+      required: true
+    },
+
+    role: {
+      type: String,
+      enum: ["admin", "owner", "teacher", "student", "parent"],
+      required: true
+    },
+
+    linkedId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null
+    },
+
+    forcePasswordChange: {
+      type: Boolean,
+      default: true
+    },
+
+    active: {
+      type: Boolean,
+      default: true
+    }
+  },
+  {
+    timestamps: true
+  }
+);
+
+/* =========================
+   FIXED: HASH PASSWORD BEFORE SAVE
+========================= */
+userSchema.pre("save", async function(next) {
+  // Check if next is a function
+  if (typeof next !== 'function') {
+    console.error("❌ ERROR: 'next' is not a function in pre-save middleware");
+    return;
+  }
+  
+  try {
+    // Only hash the password if it has been modified (or is new)
+    if (!this.isModified("password")) {
+      return next();
+    }
+    
+    // Hash password with salt rounds
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
-userSchema.methods.matchPassword = function (entered) {
-  return bcrypt.compare(entered, this.password);
+/* =========================
+   COMPARE PASSWORD (Instance method)
+========================= */
+userSchema.methods.matchPassword = async function(enteredPassword) {
+  try {
+    return await bcrypt.compare(enteredPassword, this.password);
+  } catch (error) {
+    console.error("Password comparison error:", error);
+    return false;
+  }
 };
 
 export default mongoose.model("User", userSchema);

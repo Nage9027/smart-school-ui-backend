@@ -5,13 +5,17 @@ import morgan from "morgan";
 import connectDB from "./config/db.js";
 
 /* =========================
-   ROUTE IMPORTS
+   ROUTES IMPORTS
 ========================= */
 import authRoutes from "./routes/authRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import studentRoutes from "./routes/studentRoutes.js";
 import teacherRoutes from "./routes/teacherRoutes.js";
 import attendanceRoutes from "./routes/attendanceRoutes.js";
+import examRoutes from "./routes/examRoutes.js";
+
+// 👇 NEW – student self profile route
+import studentSelfRoutes from "./routes/studentSelfRoutes.js";
 
 /* =========================
    ENV & DB CONFIG
@@ -25,30 +29,29 @@ connectDB();
 const app = express();
 
 /* =========================
-   MIDDLEWARE: BODY PARSER
+   BODY PARSER
 ========================= */
-// Increased limit to handle image uploads if necessary
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 /* =========================
-   MIDDLEWARE: CORS (CRITICAL FIX)
+   CORS
 ========================= */
 app.use(
   cors({
     origin: [
-      "http://localhost:8081", // Your current frontend port
-      "http://localhost:5173", // Standard Vite port (just in case)
-      "http://localhost:3000", // Standard React port
+      "http://localhost:8081",
+      "http://localhost:5173",
+      "http://localhost:3000",
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true, // Allows cookies/headers to be sent
+    credentials: true,
   })
 );
 
 /* =========================
-   MIDDLEWARE: LOGGING
+   LOGGER
 ========================= */
 app.use(morgan("dev"));
 
@@ -60,9 +63,13 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/admin/students", studentRoutes);
 app.use("/api/admin/teachers", teacherRoutes);
 app.use("/api/admin/attendance", attendanceRoutes);
+app.use("/api/exams", examRoutes);
+
+// 👇 NEW — Student dashboard self API
+app.use("/api/student", studentSelfRoutes);
 
 /* =========================
-   HEALTH CHECK ROUTE
+   HEALTH ROUTES
 ========================= */
 app.get("/", (req, res) => {
   res.send("API is running...");
@@ -79,15 +86,11 @@ app.get("/health", (req, res) => {
    GLOBAL ERROR HANDLER
 ========================= */
 app.use((err, req, res, next) => {
-  console.error(`❌ Error Stack: ${err.stack}`);
-  console.error(`❌ Error Message: ${err.message}`);
+  console.error("❌ Error:", err);
 
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-  
-  res.status(statusCode).json({
+  res.status(err.statusCode || 500).json({
     success: false,
     message: err.message || "Internal Server Error",
-    stack: process.env.NODE_ENV === "production" ? null : err.stack,
   });
 });
 
@@ -97,5 +100,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });

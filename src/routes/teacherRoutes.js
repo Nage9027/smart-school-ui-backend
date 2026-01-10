@@ -1,5 +1,4 @@
 import express from "express";
-
 import {
   createTeacher,
   getTeachers,
@@ -15,38 +14,18 @@ import { authorize } from "../middlewares/roleMiddleware.js";
 
 const router = express.Router();
 
-/* =========================================================
-   ADMIN / OWNER PROTECTED ROUTES
-========================================================= */
-router.use(protect, authorize("admin", "owner"));
+// All routes require authentication
+router.use(protect);
 
-/* =========================================================
-   TEACHER CRUD
-========================================================= */
+// ===== PUBLIC ROUTES (for logged-in users) =====
+router.get("/", getTeachers); // Anyone can view teachers
+router.get("/:id", getTeacherById); // Anyone can view single teacher
 
-// Create Teacher
-router.post("/", createTeacher);
-
-// Get All Teachers
-router.get("/", getTeachers);
-
-// Get Single Teacher By ID
-router.get("/:id", getTeacherById);
-
-// Update Teacher
-router.put("/:id", updateTeacher);
-
-// Update Teacher Status (Active / Inactive)
-router.put("/:id/status", updateTeacherStatus);
-
-// Soft Delete Teacher
-router.delete("/:id", deleteTeacher);
-
-/* =========================================================
-   TEACHER CLASS ASSIGNMENT
-========================================================= */
-
-// Assign Classes to Teacher
-router.put("/:id/assign-classes", assignClassesToTeacher);
+// ===== ADMIN/OWNER ONLY ROUTES =====
+router.post("/", authorize("admin", "owner"), createTeacher);
+router.put("/:id", authorize("admin", "owner"), updateTeacher);
+router.put("/:id/status", authorize("admin", "owner"), updateTeacherStatus);
+router.put("/:id/assign-classes", authorize("admin", "owner"), assignClassesToTeacher);
+router.delete("/:id", authorize("admin", "owner"), deleteTeacher);
 
 export default router;

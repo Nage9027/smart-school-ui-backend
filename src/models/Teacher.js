@@ -8,30 +8,87 @@ const teacherSchema = new mongoose.Schema(
       unique: true,
       trim: true
     },
+    
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
 
     personal: {
-      firstName: { type: String, required: true },
-      lastName: { type: String },
-      gender: { type: String, enum: ["Male", "Female", "Other"] },
-      dob: { type: Date }
+      firstName: { 
+        type: String, 
+        required: true,
+        trim: true
+      },
+      lastName: { 
+        type: String,
+        trim: true
+      },
+      gender: { 
+        type: String, 
+        enum: ["Male", "Female", "Other"],
+        default: "Male"
+      },
+      dob: { 
+        type: Date 
+      },
+      address: {
+        type: String,
+        trim: true
+      },
+      emergencyContact: {
+        type: String,
+        trim: true
+      },
+      joiningDate: {
+        type: Date,
+        default: Date.now
+      }
     },
 
     contact: {
-      phone: { type: String, required: true },
-      email: { type: String, required: true, unique: true }
+      phone: { 
+        type: String, 
+        trim: true
+      },
+      email: { 
+        type: String, 
+        required: true,
+        trim: true
+      }
     },
 
     professional: {
-      department: { type: String, required: true },
-      subjects: [{ type: String }],
-      experienceYears: { type: Number, default: 0 },
-      qualification: { type: String }
+      department: { 
+        type: String, 
+        required: true,
+        trim: true
+      },
+      subjects: [{ 
+        type: String,
+        trim: true
+      }],
+      experienceYears: { 
+        type: Number, 
+        default: 0
+      },
+      qualification: { 
+        type: String,
+        trim: true
+      }
     },
 
     assignedClasses: [
       {
-        className: String,
-        section: String
+        className: { 
+          type: String,
+          trim: true
+        },
+        section: { 
+          type: String,
+          trim: true
+        }
       }
     ],
 
@@ -42,7 +99,7 @@ const teacherSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["active", "inactive"],
+      enum: ["active", "inactive", "deleted"],
       default: "active"
     },
 
@@ -52,7 +109,9 @@ const teacherSchema = new mongoose.Schema(
       required: true
     }
   },
-  { timestamps: true }
+  { 
+    timestamps: true
+  }
 );
 
 export default mongoose.model("Teacher", teacherSchema);
