@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import morgan from "morgan";
 import connectDB from "./config/db.js";
+import historyRoutes from './routes/historyRoutes.js';
 
 /* =========================
    ROUTES IMPORTS
@@ -13,9 +14,9 @@ import studentRoutes from "./routes/studentRoutes.js";
 import teacherRoutes from "./routes/teacherRoutes.js";
 import attendanceRoutes from "./routes/attendanceRoutes.js";
 import examRoutes from "./routes/examRoutes.js";
-
-// 👇 NEW – student self profile route
 import studentSelfRoutes from "./routes/studentSelfRoutes.js";
+import financeRoutes from "./routes/financeRoutes.js"; // 👈 ADD THIS LINE
+import reportRoutes from './routes/reportRoutes.js';
 
 /* =========================
    ENV & DB CONFIG
@@ -64,9 +65,11 @@ app.use("/api/admin/students", studentRoutes);
 app.use("/api/admin/teachers", teacherRoutes);
 app.use("/api/admin/attendance", attendanceRoutes);
 app.use("/api/exams", examRoutes);
-
-// 👇 NEW — Student dashboard self API
 app.use("/api/student", studentSelfRoutes);
+app.use("/api/finance", financeRoutes); // 👈 ADD THIS LINE
+app.use('/api/history', historyRoutes);
+app.use('/api/reports', reportRoutes);
+
 
 /* =========================
    HEALTH ROUTES
