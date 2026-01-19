@@ -1,3 +1,4 @@
+// src/models/FeeStructure.js - FIXED VERSION
 import mongoose from "mongoose";
 
 const feeStructureSchema = new mongoose.Schema(
@@ -119,10 +120,30 @@ const feeStructureSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Pre-save middleware to calculate totalDue
-feeStructureSchema.pre("save", function (next) {
-  this.totalDue = Math.max(0, this.totalFee - this.totalPaid - (this.discountApplied || 0));
-  next();
+// FIXED Pre-save middleware - ASYNC VERSION (no next parameter issue)
+feeStructureSchema.pre("save", async function() {
+  // Async version doesn't use 'next' parameter
+  try {
+    // Calculate totalDue
+    const totalPaid = this.totalPaid || 0;
+    const totalFee = this.totalFee || 0;
+    const discount = this.discountApplied || 0;
+    
+    this.totalDue = Math.max(0, totalFee - totalPaid - discount);
+  } catch (error) {
+    console.error("Error in feeStructure pre-save:", error.message);
+    throw error; // Let Mongoose handle the error
+  }
 });
+
+// Alternative: If you want to keep sync version, fix it properly
+// feeStructureSchema.pre("save", function(next) {
+//   try {
+//     this.totalDue = Math.max(0, this.totalFee - this.totalPaid - (this.discountApplied || 0));
+//     next(); // MUST CALL next()
+//   } catch (error) {
+//     next(error); // Pass error to next
+//   }
+// });
 
 export default mongoose.model("FeeStructure", feeStructureSchema);

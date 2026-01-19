@@ -1,3 +1,4 @@
+// src/controllers/financeController.js - COMPLETELY REWRITTEN WITH PROPER PAYMENT LOGIC
 import asyncHandler from "../utils/asyncHandler.js";
 import Payment from "../models/Payment.js";
 import FeeStructure from "../models/FeeStructure.js";
@@ -48,14 +49,16 @@ export const searchStudents = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Get student fee details
+// @desc    Get student fee details - IMPROVED VERSION
 // @route   GET /api/finance/students/:admissionNumber/fee-details
 // @access  Private (Admin/Finance)
 export const getStudentFeeDetails = asyncHandler(async (req, res) => {
   try {
     const { admissionNumber } = req.params;
 
-    // Find student
+    console.log(`🎯 Fetching fee details for: ${admissionNumber}`);
+
+    // 1. Find student
     const student = await Student.findOne({ admissionNumber });
     if (!student) {
       return res.status(404).json({
@@ -64,77 +67,116 @@ export const getStudentFeeDetails = asyncHandler(async (req, res) => {
       });
     }
 
-    // Parse class name and section
-    const classNameParts = student.class.className.split('-');
-    const className = classNameParts[0] || student.class.className;
-    const section = classNameParts[1] || student.class.section || "A";
+    console.log(`✅ Student: ${student.student.firstName} ${student.student.lastName}`);
 
-    // Find or create fee structure
-    let feeStructure = await FeeStructure.findOne({ admissionNumber });
+    // 2. Get payments using direct MongoDB
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+    
+    // Get all payments, sorted by type (fee installments first, then receipts)
+    const rawPayments = await paymentsCollection.find({ 
+      admissionNumber: admissionNumber 
+    }).sort({ paymentType: 1, createdAt: 1 }).toArray();
+
+    console.log(`💰 Found ${rawPayments.length} payment record(s)`);
+
+    // 3. Calculate CORRECT totals
+    let totalFeeAmount = 0;    // Total fee assigned
+    let totalPaidAmount = 0;   // Total amount paid
+    let totalDueAmount = 0;    // Total still due
+    
+    // Separate fee installments from receipts
+    const feeInstallments = rawPayments.filter(p => p.paymentType === 'installment' || !p.paymentType);
+    const paymentReceipts = rawPayments.filter(p => p.paymentType === 'receipt');
+    const creditNotes = rawPayments.filter(p => p.paymentType === 'credit');
+
+    console.log(`📊 Breakdown: ${feeInstallments.length} installments, ${paymentReceipts.length} receipts, ${creditNotes.length} credits`);
+
+    // Calculate from fee installments only
+    feeInstallments.forEach((payment, index) => {
+      const amount = payment.totalAmount || 0;
+      const paid = payment.paidAmount || 0;
+      const due = payment.dueAmount || 0;
+      
+      console.log(`   Installment ${index + 1}: Total=₹${amount}, Paid=₹${paid}, Due=₹${due}, Status=${payment.status}`);
+      
+      totalFeeAmount += amount;
+      totalPaidAmount += paid;
+      totalDueAmount += due;
+    });
+
+    console.log(`📊 Totals: Fee=₹${totalFeeAmount}, Paid=₹${totalPaidAmount}, Due=₹${totalDueAmount}`);
+
+    // 4. Get or create fee structure
+    const feeStructureCollection = db.collection('feestructures');
+    let feeStructure = await feeStructureCollection.findOne({ 
+      admissionNumber: admissionNumber 
+    });
 
     if (!feeStructure) {
-      // Create default fee structure
-      const baseFee = 15000;
-      const transportFee = student.transport === "yes" ? 6000 : 0;
-      const activityFee = 3500;
-      const examFee = 5000;
-      const totalFee = baseFee + transportFee + activityFee + examFee;
-
-      feeStructure = await FeeStructure.create({
+      console.log(`📝 Creating new fee structure from data`);
+      
+      const className = student.class?.className || '';
+      const classNameParts = className.split('-');
+      const cleanClassName = classNameParts[0] || className;
+      const section = classNameParts[1] || student.class?.section || 'A';
+      
+      feeStructure = {
         admissionNumber: student.admissionNumber,
         studentId: student._id,
         studentName: `${student.student.firstName} ${student.student.lastName}`,
-        className: className,
+        className: cleanClassName,
         section: section,
-        academicYear: "2024-2025",
-        transportOpted: student.transport === "yes",
-        transportFee: transportFee,
-        feeComponents: [
-          {
-            componentName: "Tuition Fee",
-            amount: baseFee,
-            dueDate: new Date("2024-12-15"),
-            isMandatory: true,
-            status: "pending",
-          },
-          ...(student.transport === "yes"
-            ? [
-                {
-                  componentName: "Transport Fee",
-                  amount: transportFee,
-                  dueDate: new Date("2024-12-05"),
-                  isMandatory: false,
-                  status: "pending",
-                },
-              ]
-            : []),
-          {
-            componentName: "Activity Fee",
-            amount: activityFee,
-            dueDate: new Date("2024-12-20"),
-            isMandatory: true,
-            status: "pending",
-          },
-          {
-            componentName: "Examination Fee",
-            amount: examFee,
-            dueDate: new Date("2024-12-10"),
-            isMandatory: true,
-            status: "pending",
-          },
-        ],
-        totalFee: totalFee,
-        totalPaid: 0,
-        totalDue: totalFee,
-      });
+        academicYear: new Date().getFullYear().toString(),
+        totalFee: totalFeeAmount,
+        totalPaid: totalPaidAmount,
+        totalDue: totalDueAmount,
+        feeComponents: feeInstallments.map(payment => ({
+          componentName: payment.componentName || 'Annual Fee',
+          amount: payment.totalAmount || 0,
+          paidAmount: payment.paidAmount || 0,
+          dueAmount: payment.dueAmount || 0,
+          status: payment.status || 'pending',
+          dueDate: payment.dueDate || payment.createdAt,
+          paymentId: payment._id.toString()
+        })),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      
+      await feeStructureCollection.insertOne(feeStructure);
     }
 
-    // Get payment history
-    const payments = await Payment.find({ admissionNumber })
-      .sort("-paymentDate")
-      .select("receiptNumber paymentDate amount netAmount paymentMethod status");
+    // 5. Format due payments for response
+    const duePayments = feeInstallments
+      .filter(p => p.dueAmount > 0)
+      .map(payment => ({
+        _id: payment._id.toString(),
+        componentName: payment.componentName || 'Annual Fee',
+        totalAmount: payment.totalAmount || 0,
+        paidAmount: payment.paidAmount || 0,
+        dueAmount: payment.dueAmount || 0,
+        dueDate: payment.dueDate || payment.createdAt,
+        status: payment.status || 'pending'
+      }));
 
-    res.status(200).json({
+    // 6. Format payment history (receipts only)
+    const paymentHistory = paymentReceipts.map(payment => ({
+      _id: payment._id.toString(),
+      receiptNumber: payment.receiptNumber,
+      paymentDate: payment.paymentDate || payment.createdAt,
+      amount: payment.amount || 0,
+      netAmount: payment.netAmount || payment.amount || 0,
+      paymentMethod: payment.paymentMethod || 'cash',
+      status: payment.status || 'completed',
+      appliedToPayments: payment.appliedToPayments || []
+    }));
+
+    // 7. Check for available credit
+    const availableCredit = creditNotes.reduce((sum, credit) => sum + (credit.creditAmount || 0), 0);
+
+    // 8. Prepare FINAL response
+    const response = {
       success: true,
       student: {
         _id: student._id,
@@ -142,12 +184,26 @@ export const getStudentFeeDetails = asyncHandler(async (req, res) => {
         name: `${student.student.firstName} ${student.student.lastName}`,
         class: student.class,
         parents: student.parents,
-        transport: student.transport,
+        transport: student.transport || "no",
       },
-      feeStructure,
-      paymentHistory: payments,
-      totalDue: feeStructure.totalDue,
-    });
+      feeStructure: feeStructure,
+      duePayments: duePayments,
+      paymentHistory: paymentHistory,
+      summary: {
+        totalFee: totalFeeAmount,
+        totalPaid: totalPaidAmount,
+        totalDue: totalDueAmount,
+        availableCredit: availableCredit,
+        feeInstallmentsCount: feeInstallments.length,
+        receiptCount: paymentReceipts.length,
+        duePaymentsCount: duePayments.length
+      }
+    };
+
+    console.log(`🎉 SUCCESS! Fee: ₹${totalFeeAmount}, Paid: ₹${totalPaidAmount}, Due: ₹${totalDueAmount}`);
+    
+    res.status(200).json(response);
+
   } catch (error) {
     console.error("Get student fee details error:", error);
     res.status(500).json({
@@ -157,7 +213,7 @@ export const getStudentFeeDetails = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Record a new payment - FINAL WORKING VERSION
+// @desc    Record a new payment - COMPLETELY REWRITTEN WITH PROPER LOGIC
 // @route   POST /api/finance/payments/record
 // @access  Private (Admin/Finance)
 export const recordPayment = asyncHandler(async (req, res) => {
@@ -207,31 +263,153 @@ export const recordPayment = asyncHandler(async (req, res) => {
 
     console.log("✅ Student found:", student._id);
 
-    // Parse class name and section
-    const classNameParts = student.class.className.split('-');
-    const className = classNameParts[0] || student.class.className;
-    const section = classNameParts[1] || student.class.section || "A";
+    // Parse class info
+    const className = student.class?.className || 'Unknown';
+    const section = student.class?.section || 'A';
 
-    // Generate receipt number - SIMPLE AND RELIABLE
+    // Generate unique receipt number
     const timestamp = Date.now();
-    const receiptNumber = `REC-${timestamp}`;
+    const random = Math.floor(Math.random() * 1000);
+    const receiptNumber = `REC-${timestamp}-${random}`;
 
     console.log("📄 Generated receipt number:", receiptNumber);
 
     // Calculate net amount
-    const calculatedNetAmount = netAmount || 
-      (parseFloat(amount) + parseFloat(lateFee || 0) - parseFloat(discount || 0));
+    const paymentAmount = parseFloat(amount);
+    const discountAmount = parseFloat(discount || 0);
+    const lateFeeAmount = parseFloat(lateFee || 0);
+    const calculatedNetAmount = netAmount || (paymentAmount - discountAmount + lateFeeAmount);
 
-    // Clean data function - use undefined instead of null
-    const cleanData = (data) => {
-      if (data === undefined || data === null || data === '') {
-        return undefined; // Use undefined to omit field entirely
-      }
-      return data;
-    };
+    // ==============================================
+    // **CRITICAL PART: Process payment against existing dues**
+    // ==============================================
+    
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+    
+    console.log("🔍 Checking for existing due payments...");
+    
+    // Get all due payments (installments with due > 0)
+    const duePayments = await paymentsCollection.find({
+      admissionNumber: admissionNumber,
+      paymentType: { $in: ['installment', undefined] }, // Include old records without type
+      $or: [
+        { dueAmount: { $gt: 0 } },
+        { status: { $in: ['pending', 'partial', 'due'] } }
+      ]
+    }).sort({ createdAt: 1, dueDate: 1 }).toArray(); // Oldest first
 
-    // Create payment record using Mongoose create() method
-    const paymentData = {
+    console.log(`📊 Found ${duePayments.length} due payments to process`);
+    
+    let remainingAmount = calculatedNetAmount;
+    let appliedToPayments = [];
+    let processedPaymentIds = [];
+
+    // Apply payment to due payments (FIFO - First In First Out)
+    for (const duePayment of duePayments) {
+      if (remainingAmount <= 0) break;
+      
+      const paymentId = duePayment._id;
+      const totalAmount = duePayment.totalAmount || duePayment.amount || 0;
+      const currentPaid = duePayment.paidAmount || 0;
+      const currentDue = duePayment.dueAmount || (totalAmount - currentPaid);
+      
+      if (currentDue <= 0) continue; // Skip already paid payments
+      
+      const amountToApply = Math.min(remainingAmount, currentDue);
+      const newPaidAmount = currentPaid + amountToApply;
+      const newDueAmount = Math.max(0, totalAmount - newPaidAmount);
+      const newStatus = newDueAmount === 0 ? 'completed' : 
+                       (newPaidAmount > 0 ? 'partial' : 'pending');
+      
+      // Update the due payment record
+      await paymentsCollection.updateOne(
+        { _id: paymentId },
+        {
+          $set: {
+            paidAmount: newPaidAmount,
+            dueAmount: newDueAmount,
+            status: newStatus,
+            updatedAt: new Date(),
+            lastPaymentDate: new Date(),
+            lastPaymentReceipt: receiptNumber
+          },
+          $push: {
+            paymentHistory: {
+              receiptNumber: receiptNumber,
+              amount: amountToApply,
+              date: new Date(),
+              paymentMethod: paymentMethod || 'cash'
+            }
+          }
+        }
+      );
+      
+      remainingAmount -= amountToApply;
+      appliedToPayments.push({
+        paymentId: paymentId.toString(),
+        componentName: duePayment.componentName || 'Fee Installment',
+        originalDue: currentDue,
+        amountApplied: amountToApply,
+        newDue: newDueAmount,
+        status: newStatus
+      });
+      
+      processedPaymentIds.push(paymentId.toString());
+      
+      console.log(`✅ Applied ₹${amountToApply} to payment ${paymentId}. New due: ₹${newDueAmount}`);
+    }
+
+    // ==============================================
+    // **Handle remaining amount (overpayment)**
+    // ==============================================
+    let creditNote = null;
+    if (remainingAmount > 0) {
+      console.log(`💰 Remaining amount after paying dues: ₹${remainingAmount}`);
+      
+      // Create a credit note for future payments
+      const creditNoteNumber = `CREDIT-${timestamp}-${random}`;
+      creditNote = {
+        receiptNumber: creditNoteNumber,
+        admissionNumber: admissionNumber,
+        studentId: student._id,
+        studentName: `${student.student.firstName} ${student.student.lastName}`,
+        className: className,
+        section: section,
+        parentName: student.parents.father.name,
+        parentPhone: student.parents.father.phone,
+        parentEmail: student.parents.father.email || undefined,
+        
+        paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+        paymentMethod: paymentMethod || "cash",
+        
+        amount: 0, // Credit notes don't have amount
+        totalAmount: 0,
+        paidAmount: 0,
+        dueAmount: 0,
+        
+        creditAmount: remainingAmount,
+        creditReason: 'Overpayment',
+        originalReceipt: receiptNumber,
+        
+        description: `Credit from payment ${receiptNumber}`,
+        status: 'active',
+        paymentType: 'credit',
+        
+        recordedBy: req.user._id,
+        recordedByName: req.user.name || req.user.username || "System",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      
+      await paymentsCollection.insertOne(creditNote);
+      console.log(`💳 Created credit note ${creditNoteNumber}: ₹${remainingAmount}`);
+    }
+
+    // ==============================================
+    // **Create the payment receipt record**
+    // ==============================================
+    const receiptData = {
       receiptNumber,
       admissionNumber,
       studentId: student._id,
@@ -240,96 +418,98 @@ export const recordPayment = asyncHandler(async (req, res) => {
       section,
       parentName: student.parents.father.name,
       parentPhone: student.parents.father.phone,
-      parentEmail: cleanData(student.parents.father.email),
+      parentEmail: student.parents.father.email || undefined,
 
+      // Payment details
       paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
       paymentMethod: paymentMethod || "cash",
-      referenceNo: cleanData(referenceNo),
-      transactionId: cleanData(transactionId),
-      bankName: cleanData(bankName),
-      chequeNo: cleanData(chequeNo),
+      referenceNo: referenceNo || undefined,
+      transactionId: transactionId || undefined,
+      bankName: bankName || undefined,
+      chequeNo: chequeNo || undefined,
       chequeDate: chequeDate ? new Date(chequeDate) : undefined,
-      utrNo: cleanData(utrNo),
-      upiId: cleanData(upiId),
+      utrNo: utrNo || undefined,
+      upiId: upiId || undefined,
 
-      amount: parseFloat(amount),
-      discount: parseFloat(discount || 0),
-      discountReason: cleanData(discountReason),
-      lateFee: parseFloat(lateFee || 0),
-      lateFeeReason: cleanData(lateFeeReason),
+      // Amount details
+      amount: paymentAmount,
+      totalAmount: paymentAmount,
+      paidAmount: paymentAmount, // Full amount was paid
+      dueAmount: 0, // No due for receipt
+      
+      discount: discountAmount,
+      discountReason: discountReason || undefined,
+      lateFee: lateFeeAmount,
+      lateFeeReason: lateFeeReason || undefined,
       netAmount: calculatedNetAmount,
 
+      // Payment allocation
+      appliedToPayments: appliedToPayments,
+      processedPaymentIds: processedPaymentIds,
+      creditNoteCreated: creditNote ? creditNote.receiptNumber : null,
+      remainingAmount: remainingAmount, // For credit note
+      
       feesPaid: feesPaid || [],
+      description: description || `Payment for ${appliedToPayments.length} due payment(s)`,
 
-      description: cleanData(description),
-
+      // Receipt settings
       sendReceipt: sendReceipt !== undefined ? sendReceipt : true,
       sendSMS: sendSMS !== undefined ? sendSMS : true,
       sendEmail: sendEmail !== undefined ? sendEmail : true,
+      printed: false,
 
+      // Metadata
       recordedBy: req.user._id,
       recordedByName: req.user.name || req.user.username || "System",
+      status: 'completed',
+      paymentType: 'receipt', // This is a receipt, not a fee installment
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
 
-    console.log("💾 Saving payment data...");
+    console.log("💾 Saving payment receipt...");
+    
+    // Save the receipt
+    const result = await paymentsCollection.insertOne(receiptData);
+    const paymentId = result.insertedId;
+    
+    console.log("✅ Payment receipt saved:", paymentId);
+    
+    const payment = { ...receiptData, _id: paymentId };
 
-    // METHOD 1: Try using Mongoose create() - it should work now without middleware
-    try {
-      const payment = await Payment.create(paymentData);
-      
-      console.log("✅ Payment saved via Mongoose create():", payment._id);
+    // Update fee structure with new totals
+    await updateFeeStructure(payment);
 
-      // Update fee structure
-      await updateFeeStructure(payment);
+    // Generate receipt document
+    const receipt = await generateReceipt(payment);
 
-      // Generate receipt
-      const receipt = await generateReceipt(payment);
-
-      console.log("✅ Payment process completed successfully");
-
-      return res.status(201).json({
-        success: true,
-        message: "Payment recorded successfully",
-        data: {
-          payment,
-          receipt,
-        },
-      });
-    } catch (mongooseError) {
-      console.log("⚠️ Mongoose create() failed, trying alternative method...");
-      
-      // METHOD 2: Use direct MongoDB connection
-      try {
-        const db = mongoose.connection.db;
-        const paymentsCollection = db.collection('payments');
-        
-        // Remove undefined values for MongoDB
-        const cleanPaymentData = JSON.parse(JSON.stringify(paymentData));
-        
-        const result = await paymentsCollection.insertOne(cleanPaymentData);
-        const paymentId = result.insertedId;
-        
-        console.log("✅ Payment saved via direct MongoDB:", paymentId);
-        
-        // Update fee structure
-        await updateFeeStructure(cleanPaymentData);
-        
-        // Generate receipt
-        const receipt = await generateReceipt({...cleanPaymentData, _id: paymentId});
-        
-        return res.status(201).json({
-          success: true,
-          message: "Payment recorded successfully (direct MongoDB)",
-          data: {
-            payment: { ...cleanPaymentData, _id: paymentId },
-            receipt,
-          },
-        });
-      } catch (mongoError) {
-        console.error("❌ Both methods failed:", mongoError.message);
-        throw mongoError;
-      }
+    // Send notifications if enabled
+    if (sendEmail && student.parents.father.email) {
+      await simulateEmailReceipt(receipt, student.parents.father.email);
     }
+    if (sendSMS && student.parents.father.phone) {
+      await simulateSMSNotification(receipt, student.parents.father.phone);
+    }
+
+    console.log("✅ Payment process completed successfully");
+
+    return res.status(201).json({
+      success: true,
+      message: "Payment recorded successfully",
+      data: {
+        payment,
+        receipt,
+        appliedToPayments: appliedToPayments,
+        creditNote: creditNote,
+        summary: {
+          totalAmount: paymentAmount,
+          amountApplied: paymentAmount - remainingAmount,
+          creditCreated: remainingAmount,
+          paymentsUpdated: appliedToPayments.length
+        }
+      },
+    });
+
   } catch (error) {
     console.error("❌ Record payment error:", error);
     
@@ -341,6 +521,108 @@ export const recordPayment = asyncHandler(async (req, res) => {
     }
     
     return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to record payment",
+    });
+  }
+});
+
+// @desc    Create a fee installment (for initial fee assignment)
+// @route   POST /api/finance/payments/create-installment
+// @access  Private (Admin/Finance)
+export const createFeeInstallment = asyncHandler(async (req, res) => {
+  try {
+    const {
+      admissionNumber,
+      componentName,
+      totalAmount,
+      dueDate,
+      academicYear,
+      description
+    } = req.body;
+
+    // Validate
+    if (!admissionNumber || !componentName || !totalAmount) {
+      return res.status(400).json({
+        success: false,
+        message: "Required fields missing: admissionNumber, componentName, totalAmount",
+      });
+    }
+
+    // Get student
+    const student = await Student.findOne({ admissionNumber });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const className = student.class?.className || 'Unknown';
+    const section = student.class?.section || 'A';
+
+    // Generate installment ID
+    const installmentNumber = `INST-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+
+    const installmentData = {
+      installmentNumber,
+      admissionNumber,
+      studentId: student._id,
+      studentName: `${student.student.firstName} ${student.student.lastName}`,
+      className,
+      section,
+      parentName: student.parents.father.name,
+      parentPhone: student.parents.father.phone,
+
+      componentName,
+      totalAmount: parseFloat(totalAmount),
+      paidAmount: 0,
+      dueAmount: parseFloat(totalAmount),
+      
+      dueDate: dueDate ? new Date(dueDate) : new Date(),
+      academicYear: academicYear || new Date().getFullYear().toString(),
+      description: description || `${componentName} installment`,
+      
+      status: 'pending',
+      paymentType: 'installment',
+      
+      recordedBy: req.user._id,
+      recordedByName: req.user.name || req.user.username || "System",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await paymentsCollection.insertOne(installmentData);
+    const installmentId = result.insertedId;
+
+    // Update fee structure
+    await updateFeeStructure({
+      admissionNumber,
+      studentId: student._id,
+      studentName: `${student.student.firstName} ${student.student.lastName}`,
+      className,
+      section,
+      totalAmount: parseFloat(totalAmount),
+      paidAmount: 0,
+      dueAmount: parseFloat(totalAmount)
+    });
+
+    console.log("✅ Fee installment created:", installmentNumber);
+
+    res.status(201).json({
+      success: true,
+      message: "Fee installment created successfully",
+      data: {
+        installment: { ...installmentData, _id: installmentId }
+      }
+    });
+
+  } catch (error) {
+    console.error("Create fee installment error:", error);
+    res.status(500).json({
       success: false,
       message: error.message,
     });
@@ -354,9 +636,10 @@ export const getPaymentByReceipt = asyncHandler(async (req, res) => {
   try {
     const { receiptNumber } = req.params;
 
-    const payment = await Payment.findOne({ receiptNumber })
-      .populate("studentId", "admissionNumber student class")
-      .populate("recordedBy", "name email username");
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+    
+    const payment = await paymentsCollection.findOne({ receiptNumber });
 
     if (!payment) {
       return res.status(404).json({
@@ -365,12 +648,35 @@ export const getPaymentByReceipt = asyncHandler(async (req, res) => {
       });
     }
 
+    // Get student details
+    const student = await Student.findById(payment.studentId)
+      .select("admissionNumber student class parents");
+
+    // Get receipt
     const receipt = await Receipt.findOne({ receiptNumber });
+
+    // If payment was applied to other payments, get their details
+    let appliedPaymentsDetails = [];
+    if (payment.appliedToPayments && payment.appliedToPayments.length > 0) {
+      const appliedIds = payment.appliedToPayments.map(p => new mongoose.Types.ObjectId(p.paymentId));
+      appliedPaymentsDetails = await paymentsCollection.find({
+        _id: { $in: appliedIds }
+      }).toArray();
+    }
 
     res.status(200).json({
       success: true,
-      payment,
+      payment: {
+        ...payment,
+        _id: payment._id.toString(),
+        student: student
+      },
       receipt,
+      appliedPaymentsDetails: appliedPaymentsDetails.map(p => ({
+        _id: p._id.toString(),
+        componentName: p.componentName,
+        amountApplied: payment.appliedToPayments?.find(ap => ap.paymentId === p._id.toString())?.amountApplied || 0
+      }))
     });
   } catch (error) {
     console.error("Get payment by receipt error:", error);
@@ -392,10 +698,13 @@ export const getAllPayments = asyncHandler(async (req, res) => {
       paymentMethod,
       className,
       status,
+      paymentType,
+      admissionNumber,
       page = 1,
       limit = 20,
     } = req.query;
 
+    // Build filter
     const filter = {};
 
     // Date filter
@@ -409,22 +718,44 @@ export const getAllPayments = asyncHandler(async (req, res) => {
     if (paymentMethod) filter.paymentMethod = paymentMethod;
     if (className) filter.className = className;
     if (status) filter.status = status;
+    if (paymentType) filter.paymentType = paymentType;
+    if (admissionNumber) filter.admissionNumber = admissionNumber;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const payments = await Payment.find(filter)
-      .sort("-paymentDate")
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+    
+    const payments = await paymentsCollection.find(filter)
+      .sort({ paymentDate: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .select(
-        "receiptNumber studentName admissionNumber className section paymentDate amount netAmount paymentMethod status"
-      );
+      .toArray();
 
-    const total = await Payment.countDocuments(filter);
+    const total = await paymentsCollection.countDocuments(filter);
+
+    // Format response
+    const formattedPayments = payments.map(payment => ({
+      _id: payment._id.toString(),
+      receiptNumber: payment.receiptNumber,
+      studentName: payment.studentName,
+      admissionNumber: payment.admissionNumber,
+      className: payment.className,
+      section: payment.section,
+      paymentDate: payment.paymentDate,
+      amount: payment.amount,
+      netAmount: payment.netAmount,
+      paymentMethod: payment.paymentMethod,
+      status: payment.status,
+      paymentType: payment.paymentType || 'receipt',
+      totalAmount: payment.totalAmount || payment.amount,
+      paidAmount: payment.paidAmount || 0,
+      dueAmount: payment.dueAmount || 0
+    }));
 
     res.status(200).json({
       success: true,
-      payments,
+      payments: formattedPayments,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -450,12 +781,16 @@ export const getPaymentSummary = asyncHandler(async (req, res) => {
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-    // Today's payments
-    const todayPayments = await Payment.aggregate([
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+
+    // Today's receipts (actual payments)
+    const todayPayments = await paymentsCollection.aggregate([
       {
         $match: {
           paymentDate: { $gte: startOfDay },
           status: "completed",
+          paymentType: "receipt"
         },
       },
       {
@@ -465,14 +800,15 @@ export const getPaymentSummary = asyncHandler(async (req, res) => {
           count: { $sum: 1 },
         },
       },
-    ]);
+    ]).toArray();
 
-    // This month's payments
-    const monthPayments = await Payment.aggregate([
+    // This month's receipts
+    const monthPayments = await paymentsCollection.aggregate([
       {
         $match: {
           paymentDate: { $gte: startOfMonth },
           status: "completed",
+          paymentType: "receipt"
         },
       },
       {
@@ -482,14 +818,32 @@ export const getPaymentSummary = asyncHandler(async (req, res) => {
           count: { $sum: 1 },
         },
       },
-    ]);
+    ]).toArray();
+
+    // Total outstanding (due payments)
+    const totalOutstanding = await paymentsCollection.aggregate([
+      {
+        $match: {
+          paymentType: { $in: ['installment', undefined] },
+          dueAmount: { $gt: 0 }
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalDue: { $sum: "$dueAmount" },
+          count: { $sum: 1 },
+        },
+      },
+    ]).toArray();
 
     // Payment methods breakdown
-    const methodBreakdown = await Payment.aggregate([
+    const methodBreakdown = await paymentsCollection.aggregate([
       {
         $match: {
           paymentDate: { $gte: startOfMonth },
           status: "completed",
+          paymentType: "receipt"
         },
       },
       {
@@ -500,14 +854,15 @@ export const getPaymentSummary = asyncHandler(async (req, res) => {
         },
       },
       { $sort: { totalAmount: -1 } },
-    ]);
+    ]).toArray();
 
     // Class-wise collection
-    const classBreakdown = await Payment.aggregate([
+    const classBreakdown = await paymentsCollection.aggregate([
       {
         $match: {
           paymentDate: { $gte: startOfMonth },
           status: "completed",
+          paymentType: "receipt"
         },
       },
       {
@@ -518,7 +873,7 @@ export const getPaymentSummary = asyncHandler(async (req, res) => {
         },
       },
       { $sort: { totalAmount: -1 } },
-    ]);
+    ]).toArray();
 
     res.status(200).json({
       success: true,
@@ -529,6 +884,10 @@ export const getPaymentSummary = asyncHandler(async (req, res) => {
       thisMonth: {
         totalAmount: monthPayments[0]?.totalAmount || 0,
         count: monthPayments[0]?.count || 0,
+      },
+      outstanding: {
+        totalDue: totalOutstanding[0]?.totalDue || 0,
+        count: totalOutstanding[0]?.count || 0,
       },
       methodBreakdown,
       classBreakdown,
@@ -542,47 +901,199 @@ export const getPaymentSummary = asyncHandler(async (req, res) => {
   }
 });
 
+// @desc    Fix payment calculations for a student
+// @route   POST /api/finance/payments/fix-student/:admissionNumber
+// @access  Private (Admin/Finance)
+export const fixStudentPayments = asyncHandler(async (req, res) => {
+  try {
+    const { admissionNumber } = req.params;
+    
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+    
+    // Get all payments for this student
+    const allPayments = await paymentsCollection.find({
+      admissionNumber: admissionNumber
+    }).sort({ createdAt: 1 }).toArray();
+    
+    console.log(`🔧 Fixing ${allPayments.length} payments for ${admissionNumber}`);
+    
+    let corrections = [];
+    
+    // Fix each payment record
+    for (const payment of allPayments) {
+      const originalAmount = payment.totalAmount || payment.amount || 0;
+      const originalPaid = payment.paidAmount || 0;
+      const originalDue = payment.dueAmount || 0;
+      
+      // Determine payment type if not set
+      let paymentType = payment.paymentType;
+      if (!paymentType) {
+        paymentType = payment.receiptNumber?.startsWith('REC-') ? 'receipt' : 
+                     payment.receiptNumber?.startsWith('INST-') ? 'installment' :
+                     payment.receiptNumber?.startsWith('CREDIT-') ? 'credit' :
+                     'installment'; // default
+      }
+      
+      let newDue = originalDue;
+      let newStatus = payment.status;
+      
+      if (paymentType === 'receipt') {
+        // Receipts should have dueAmount = 0
+        newDue = 0;
+        newStatus = 'completed';
+      } else if (paymentType === 'installment') {
+        // Installments: due = total - paid
+        newDue = Math.max(0, originalAmount - originalPaid);
+        newStatus = newDue === 0 ? 'completed' : 
+                   (originalPaid > 0 ? 'partial' : 'pending');
+      } else if (paymentType === 'credit') {
+        // Credits: no due
+        newDue = 0;
+        newStatus = 'active';
+      }
+      
+      // Update if needed
+      if (payment.dueAmount !== newDue || payment.status !== newStatus || payment.paymentType !== paymentType) {
+        await paymentsCollection.updateOne(
+          { _id: payment._id },
+          {
+            $set: {
+              dueAmount: newDue,
+              status: newStatus,
+              paymentType: paymentType,
+              updatedAt: new Date()
+            }
+          }
+        );
+        
+        corrections.push({
+          paymentId: payment._id.toString(),
+          receiptNumber: payment.receiptNumber,
+          action: 'Recalculated',
+          oldDue: originalDue,
+          newDue: newDue,
+          oldStatus: payment.status,
+          newStatus: newStatus,
+          paymentType: paymentType
+        });
+      }
+    }
+    
+    // Recalculate fee structure
+    const student = await Student.findOne({ admissionNumber });
+    if (student) {
+      await updateFeeStructure({
+        admissionNumber,
+        studentId: student._id,
+        studentName: `${student.student.firstName} ${student.student.lastName}`,
+        className: student.class?.className || 'Unknown',
+        section: student.class?.section || 'A'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: `Fixed ${corrections.length} payment records`,
+      corrections: corrections
+    });
+    
+  } catch (error) {
+    console.error("Fix student payments error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
 // ==================== HELPER FUNCTIONS ====================
 
-// Helper function to update fee structure
-const updateFeeStructure = async (payment) => {
+// Helper function to update fee structure with correct totals
+const updateFeeStructure = async (paymentData) => {
   try {
-    const feeStructure = await FeeStructure.findOne({
-      admissionNumber: payment.admissionNumber,
+    const { admissionNumber, studentId, studentName, className, section } = paymentData;
+    
+    const db = mongoose.connection.db;
+    const paymentsCollection = db.collection('payments');
+    const feeStructureCollection = db.collection('feestructures');
+    
+    // Get all installment payments for this student
+    const installmentPayments = await paymentsCollection.find({
+      admissionNumber: admissionNumber,
+      paymentType: { $in: ['installment', undefined] }
+    }).toArray();
+    
+    // Calculate totals from installments only
+    let totalFee = 0;
+    let totalPaid = 0;
+    let totalDue = 0;
+    
+    installmentPayments.forEach(payment => {
+      totalFee += payment.totalAmount || payment.amount || 0;
+      totalPaid += payment.paidAmount || 0;
+      totalDue += payment.dueAmount || 0;
     });
-
+    
+    // Parse class name
+    const classNameParts = (className || '').split('-');
+    const cleanClassName = classNameParts[0] || className || 'Unknown';
+    const cleanSection = classNameParts[1] || section || 'A';
+    
+    // Find or create fee structure
+    let feeStructure = await feeStructureCollection.findOne({
+      admissionNumber: admissionNumber,
+    });
+    
+    const feeStructureData = {
+      admissionNumber: admissionNumber,
+      studentId: studentId,
+      studentName: studentName,
+      className: cleanClassName,
+      section: cleanSection,
+      academicYear: new Date().getFullYear().toString(),
+      totalFee: totalFee,
+      totalPaid: totalPaid,
+      totalDue: totalDue,
+      feeComponents: installmentPayments.map(payment => ({
+        paymentId: payment._id.toString(),
+        componentName: payment.componentName || 'Fee Installment',
+        amount: payment.totalAmount || payment.amount || 0,
+        paidAmount: payment.paidAmount || 0,
+        dueAmount: payment.dueAmount || 0,
+        status: payment.status || 'pending',
+        dueDate: payment.dueDate || payment.createdAt
+      })),
+      updatedAt: new Date()
+    };
+    
     if (feeStructure) {
-      feeStructure.totalPaid += payment.netAmount;
-      
-      // Manually calculate totalDue
-      feeStructure.totalDue = Math.max(0, 
-        feeStructure.totalFee - feeStructure.totalPaid - (feeStructure.discountApplied || 0)
+      await feeStructureCollection.updateOne(
+        { _id: feeStructure._id },
+        { $set: feeStructureData }
       );
-
-      await feeStructure.save();
-      console.log("✅ Fee structure updated:", feeStructure._id);
+      console.log("✅ Fee structure updated");
+    } else {
+      feeStructureData.createdAt = new Date();
+      await feeStructureCollection.insertOne(feeStructureData);
+      console.log("✅ Fee structure created");
     }
+    
+    return feeStructureData;
   } catch (error) {
     console.error("Error updating fee structure:", error.message);
+    throw error;
   }
 };
 
 // Helper function to generate receipt
 const generateReceipt = async (payment) => {
   try {
-    const amountInWords = convertToWords(payment.netAmount);
-
-    // Clean data for receipt
-    const cleanReceiptData = (data) => {
-      if (data === undefined || data === null || data === '') {
-        return undefined;
-      }
-      return data;
-    };
+    const amountInWords = convertToWords(payment.netAmount || payment.amount || 0);
 
     const receiptData = {
       receiptNumber: payment.receiptNumber,
-      paymentId: payment._id || payment.id,
+      paymentId: payment._id,
 
       studentDetails: {
         name: payment.studentName,
@@ -591,31 +1102,40 @@ const generateReceipt = async (payment) => {
         section: payment.section,
         parentName: payment.parentName,
         parentPhone: payment.parentPhone,
-        parentEmail: cleanReceiptData(payment.parentEmail),
+        parentEmail: payment.parentEmail,
       },
 
       paymentDetails: {
         date: payment.paymentDate,
         method: payment.paymentMethod,
-        reference: cleanReceiptData(payment.referenceNo),
-        bankName: cleanReceiptData(payment.bankName),
-        chequeNo: cleanReceiptData(payment.chequeNo),
-        transactionId: cleanReceiptData(payment.transactionId),
+        reference: payment.referenceNo,
+        bankName: payment.bankName,
+        chequeNo: payment.chequeNo,
+        transactionId: payment.transactionId,
       },
 
       amountDetails: {
         totalAmount: payment.amount,
         discount: payment.discount,
-        discountReason: cleanReceiptData(payment.discountReason),
+        discountReason: payment.discountReason,
         lateFee: payment.lateFee,
-        lateFeeReason: cleanReceiptData(payment.lateFeeReason),
-        netAmount: payment.netAmount,
+        lateFeeReason: payment.lateFeeReason,
+        netAmount: payment.netAmount || payment.amount,
         amountInWords: amountInWords,
       },
 
       feesBreakdown: payment.feesPaid || [],
-
-      schoolDetails: {},
+      appliedPayments: payment.appliedToPayments || [],
+      
+      schoolDetails: {
+        name: "AI School ERP",
+        address: "123 Education Street, Smart City",
+        phone: "+91 98765 43210",
+        email: "accounts@aischoolerp.edu.in",
+      },
+      
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
 
     const receipt = await Receipt.create(receiptData);
@@ -627,7 +1147,7 @@ const generateReceipt = async (payment) => {
     // Return minimal receipt object
     return {
       receiptNumber: payment.receiptNumber,
-      paymentId: payment._id || payment.id,
+      paymentId: payment._id,
       studentDetails: {
         name: payment.studentName,
         admissionNumber: payment.admissionNumber,
@@ -639,10 +1159,11 @@ const generateReceipt = async (payment) => {
 
 // Helper function to simulate email receipt
 const simulateEmailReceipt = async (receipt, email) => {
+  if (!email) return;
+  
   console.log(`📧 Email receipt sent to ${email} for receipt ${receipt.receiptNumber}`);
 
   try {
-    // Update receipt status
     if (receipt && receipt.save) {
       receipt.emailed = true;
       receipt.emailedAt = new Date();
@@ -656,10 +1177,11 @@ const simulateEmailReceipt = async (receipt, email) => {
 
 // Helper function to simulate SMS notification
 const simulateSMSNotification = async (receipt, phone) => {
+  if (!phone) return;
+  
   console.log(`📱 SMS sent to ${phone} for receipt ${receipt.receiptNumber}`);
 
   try {
-    // Update receipt status
     if (receipt && receipt.save) {
       receipt.smsSent = true;
       receipt.smsSentAt = new Date();

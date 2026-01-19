@@ -1,16 +1,13 @@
+// src/models/Payment.js - FIXED VERSION
 import mongoose from "mongoose";
 
 const paymentSchema = new mongoose.Schema(
   {
-    receiptNumber: {
-      type: String,
-      required: true,
-      unique: true,
-    },
+    // Student Information
     admissionNumber: {
       type: String,
       required: true,
-      ref: "Student",
+      index: true,
     },
     studentId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -21,119 +18,105 @@ const paymentSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    className: {
+    
+    // Class Information
+    class: {
+      type: Object,
+      default: {},
+    },
+    className: String,
+    section: String,
+    
+    // Academic Year
+    academicYear: {
       type: String,
       required: true,
     },
-    section: {
-      type: String,
-      required: true,
+    
+    // Fee Structure Reference
+    feeStructureId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "FeeStructure",
     },
-    parentName: {
-      type: String,
-      required: true,
-    },
-    parentPhone: {
-      type: String,
-      required: true,
-    },
-    parentEmail: {
-      type: String,
-      default: null,
-    },
-
-    // Payment Details
-    paymentDate: {
-      type: Date,
-      required: true,
-      default: Date.now,
-    },
-    paymentMethod: {
-      type: String,
-      required: true,
-      enum: ["cash", "cheque", "bank_transfer", "upi", "card", "online"],
-      default: "cash",
-    },
-    referenceNo: {
-      type: String,
-      default: null,
-    },
-    transactionId: {
-      type: String,
-      default: null,
-    },
-    bankName: {
-      type: String,
-      default: null,
-    },
-    chequeNo: {
-      type: String,
-      default: null,
-    },
-    chequeDate: {
-      type: Date,
-      default: null,
-    },
-    utrNo: {
-      type: String,
-      default: null,
-    },
-    upiId: {
-      type: String,
-      default: null,
-    },
-
-    // Amount Details
-    amount: {
+    
+    // CRITICAL FIX: ADD THESE FIELDS!
+    totalAmount: {
       type: Number,
       required: true,
-      min: 0,
+      default: 0,
     },
+    paidAmount: {
+      type: Number,
+      default: 0,
+    },
+    dueAmount: {
+      type: Number,
+      default: 0,
+    },
+    
+    // Payment Status
+    status: {
+      type: String,
+      enum: ["pending", "partial", "paid", "overdue", "cancelled"],
+      default: "pending",
+    },
+    
+    // Dates
+    dueDate: Date,
+    paymentDate: {
+      type: Date,
+      default: Date.now,
+    },
+    
+    // Payment Details
+    receiptNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    
+    // Payment Method
+    paymentMethod: {
+      type: String,
+      enum: ["cash", "cheque", "online", "upi", "card", "bank-transfer"],
+      default: "cash",
+    },
+    
+    // Transaction Details
+    referenceNo: String,
+    transactionId: String,
+    bankName: String,
+    chequeNo: String,
+    chequeDate: Date,
+    utrNo: String,
+    upiId: String,
+    
+    // Amount Details
+    amount: Number,
     discount: {
       type: Number,
       default: 0,
-      min: 0,
     },
-    discountReason: {
-      type: String,
-      default: null,
-    },
+    discountReason: String,
     lateFee: {
       type: Number,
       default: 0,
-      min: 0,
     },
-    lateFeeReason: {
-      type: String,
-      default: null,
-    },
-    netAmount: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
+    lateFeeReason: String,
+    netAmount: Number,
+    
     // Fee Breakdown
-    feesPaid: [
+    breakdown: [
       {
-        feeType: String,
+        name: String,
         amount: Number,
-        dueDate: Date,
-        description: String,
+        category: String,
       },
     ],
-
-    // Additional Info
-    description: {
-      type: String,
-      default: null,
-    },
-    academicYear: {
-      type: String,
-      default: "2024-2025",
-    },
-
-    // Receipt Options
+    
+    feesPaid: Array,
+    
+    // Communication Flags
     sendReceipt: {
       type: Boolean,
       default: true,
@@ -150,30 +133,37 @@ const paymentSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-
-    // Status
-    status: {
-      type: String,
-      enum: ["pending", "completed", "cancelled", "refunded"],
-      default: "completed",
-    },
-
-    // Audit Trail
+    
+    // Description
+    description: String,
+    
+    // Audit Fields
     recordedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
     },
     recordedByName: String,
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
   },
-  { 
-    timestamps: true,
-    // This prevents Mongoose from setting empty strings
-    minimize: false 
-  }
+  { timestamps: true }
 );
 
-// ABSOLUTELY NO PRE-SAVE MIDDLEWARE!
-// Don't add any schema.pre() functions!
+// Create indexes
+paymentSchema.index({ admissionNumber: 1 });
+paymentSchema.index({ academicYear: 1 });
+paymentSchema.index({ status: 1 });
+paymentSchema.index({ paymentDate: -1 });
+paymentSchema.index({ receiptNumber: 1 }, { unique: true, sparse: true });
+
+// Pre-save middleware to calculate dueAmount if not set
+paymentSchema.pre("save", function (next) {
+  if (this.isModified("totalAmount") || this.isModified("paidAmount")) {
+    this.dueAmount = Math.max(0, this.totalAmount - this.paidAmount);
+  }
+  next();
+});
 
 export default mongoose.model("Payment", paymentSchema);
