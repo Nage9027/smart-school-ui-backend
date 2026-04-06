@@ -19,10 +19,24 @@ import {
 
 /**
  * Validate payment method-specific required fields and formats
+ * UTR/Transaction Reference is MANDATORY for ALL payment methods EXCEPT cash
  */
 function validatePaymentMethodDetails(method, body) {
   const errors = [];
 
+  // Cash payments: No reference number required
+  if (method === 'cash') {
+    return null;
+  }
+
+  // ALL non-cash payments require UTR/Transaction Reference (12-35 chars)
+  if (!body.utrNo || body.utrNo.trim() === '') {
+    errors.push('Transaction Reference Number (UTR/RRN) is required for all non-cash payments');
+  } else if (!/^[A-Za-z0-9]{12,35}$/.test(body.utrNo.trim())) {
+    errors.push('Transaction Reference Number must be 12-35 alphanumeric characters');
+  }
+
+  // Payment method-specific validations
   switch (method) {
     case 'upi':
       if (!body.upiId || body.upiId.trim() === '') {
@@ -30,29 +44,13 @@ function validatePaymentMethodDetails(method, body) {
       } else if (!/^[\w.-]+@[\w]+$/.test(body.upiId)) {
         errors.push('Invalid UPI ID format. Example: username@paytm or 9876543210@paytm');
       }
-
-      if (!body.transactionId || body.transactionId.trim() === '') {
-        errors.push('Transaction ID is required for UPI payments');
-      } else if (!/^[A-Za-z0-9]{12,20}$/.test(body.transactionId.trim())) {
-        errors.push('Transaction ID must be 12-20 alphanumeric characters');
-      }
       break;
 
     case 'bank-transfer':
-      if (!body.utrNo || body.utrNo.trim() === '') {
-        errors.push('Transaction reference number (UTR/RRN) is required');
-      } else if (!/^[A-Za-z0-9]{12,35}$/.test(body.utrNo.trim())) {
-        errors.push('Reference number must be 12-35 alphanumeric characters (UPI/IMPS: 12 digits, NEFT: 16, RTGS: 22, PhonePe/GPay: 20-35)');
-      }
-
       if (!body.bankName || body.bankName.trim() === '') {
         errors.push('Bank name is required for bank transfer payments');
       } else if (!/^[a-zA-Z\s]{2,50}$/.test(body.bankName.trim())) {
         errors.push('Bank name must be 2-50 alphabetic characters');
-      }
-
-      if (!body.transactionId || body.transactionId.trim() === '') {
-        errors.push('Transaction ID is required for bank transfer payments');
       }
 
       if (!body.ifscCode || body.ifscCode.trim() === '') {
@@ -100,39 +98,15 @@ function validatePaymentMethodDetails(method, body) {
       break;
 
     case 'card':
-      if (!body.transactionId || body.transactionId.trim() === '') {
-        errors.push('Transaction ID is required for card payments');
-      } else if (!/^[A-Za-z0-9]{6,30}$/.test(body.transactionId.trim())) {
-        errors.push('Transaction ID must be 6-30 alphanumeric characters');
-      }
-
       if (!body.cardLast4 || body.cardLast4.trim() === '') {
         errors.push('Last 4 digits of card are required for card payments');
       } else if (!/^\d{4}$/.test(body.cardLast4.trim())) {
         errors.push('Card last 4 digits must be exactly 4 digits');
       }
-
-      if (!body.referenceNo || body.referenceNo.trim() === '') {
-        errors.push('Reference number is required for card payments');
-      }
       break;
 
     case 'online':
-      if (!body.transactionId || body.transactionId.trim() === '') {
-        errors.push('Transaction ID is required for online payments');
-      } else if (!/^[A-Za-z0-9]{6,30}$/.test(body.transactionId.trim())) {
-        errors.push('Transaction ID must be 6-30 alphanumeric characters');
-      }
-
-      if (!body.referenceNo || body.referenceNo.trim() === '') {
-        errors.push('Reference number is required for online payments');
-      } else if (!/^[A-Za-z0-9]{6,20}$/.test(body.referenceNo.trim())) {
-        errors.push('Reference number must be 6-20 alphanumeric characters');
-      }
-      break;
-
-    case 'cash':
-      // Cash only requires amount, no additional validation needed
+      // Online payments only require UTR (already validated above)
       break;
 
     default:
