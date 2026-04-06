@@ -854,6 +854,14 @@ export const voidTransaction = asyncHandler(async (req, res) => {
     if (payment.shiftId) {
       const shift = await ShiftSession.findById(payment.shiftId).session(session);
       if (shift) {
+        // CRITICAL: Prevent voiding payments from closed shifts (audit integrity)
+        if (shift.status === 'closed') {
+          await session.abortTransaction();
+          return res.status(400).json({
+            success: false,
+            message: 'Cannot void payment from a closed shift. Contact admin to reopen shift.'
+          });
+        }
         await reversePaymentFromShift(shift, payment, session);
       }
     }

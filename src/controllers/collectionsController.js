@@ -28,8 +28,8 @@ export const getCollections = asyncHandler(async (req, res) => {
     // Build match stage
     const matchStage = {};
 
-    // Only get receipt type payments
-    matchStage.paymentType = { $in: ['receipt', 'payment'] };
+    // Only get receipt type payments (include installment - the standard payment type)
+    matchStage.paymentType = { $in: ['receipt', 'payment', 'installment'] };
     matchStage.status = { $ne: 'cancelled' };
 
     // Search filter
@@ -412,9 +412,9 @@ export const getCollectionDetails = asyncHandler(async (req, res) => {
     const studentsCollection = db.collection('students');
 
     // Get payment
-    const payment = await paymentsCollection.findOne({ 
+    const payment = await paymentsCollection.findOne({
       receiptNumber,
-      paymentType: { $in: ['receipt', 'payment'] }
+      paymentType: { $in: ['receipt', 'payment', 'installment'] }
     });
 
     if (!payment) {
@@ -629,7 +629,7 @@ export const exportCollections = asyncHandler(async (req, res) => {
 
     // Build match stage
     const matchStage = {
-      paymentType: { $in: ['receipt', 'payment'] },
+      paymentType: { $in: ['receipt', 'payment', 'installment'] },
       status: { $ne: 'cancelled' }
     };
 
@@ -809,7 +809,7 @@ export const getCollectionsStatistics = asyncHandler(async (req, res) => {
     const overallPipeline = [
       {
         $match: {
-          paymentType: { $in: ['receipt', 'payment'] },
+          paymentType: { $in: ['receipt', 'payment', 'installment'] },
           status: { $ne: 'cancelled' }
         }
       },

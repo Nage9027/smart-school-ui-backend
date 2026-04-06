@@ -148,6 +148,15 @@ export const recordPayment = asyncHandler(async (req, res) => {
   session.startTransaction();
 
   try {
+    // CRITICAL: Authorization check - only cashier/admin/owner can record payments
+    if (!req.user || !['cashier', 'admin', 'owner'].includes(req.user.role)) {
+      await session.abortTransaction();
+      return res.status(403).json({
+        success: false,
+        message: 'Only cashiers, admins, and owners can record payments'
+      });
+    }
+
     const {
       admissionNumber,
       paymentDate,
@@ -194,6 +203,36 @@ export const recordPayment = asyncHandler(async (req, res) => {
         message: 'Payment amount cannot exceed ₹999,999'
       });
     }
+
+    // CRITICAL: Validate discount bounds (max 100% of amount)
+    const discountAmount = parseFloat(discount) || 0;
+    if (discountAmount < 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Discount cannot be negative'
+      });
+    }
+    if (discountAmount > paymentAmount) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Discount cannot exceed payment amount'
+      });
+    }
+
+    // CRITICAL: Validate late fee is non-negative
+    const lateFeeAmount = parseFloat(lateFee) || 0;
+    if (lateFeeAmount < 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Late fee cannot be negative'
+      });
+    }
+
+    // CRITICAL: Recalculate netAmount server-side (never trust client)
+    const calculatedNetAmount = paymentAmount - discountAmount + lateFeeAmount;
 
     // Normalize payment method to lowercase
     const normalizedMethod = paymentMethod.toLowerCase().replace('_', '-');
@@ -306,9 +345,9 @@ export const recordPayment = asyncHandler(async (req, res) => {
       paymentDate: paymentDate ? new Date(paymentDate) : new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })),
       paymentMethod: normalizedMethod, // Use normalized method name
       amount: paymentAmount,
-      discount: parseFloat(discount) || 0,
-      lateFee: parseFloat(lateFee) || 0,
-      netAmount: parseFloat(netAmount) || paymentAmount,
+      discount: discountAmount,
+      lateFee: lateFeeAmount,
+      netAmount: calculatedNetAmount, // CRITICAL: Use server-calculated value, not client value
 
       referenceNo,
       transactionId,

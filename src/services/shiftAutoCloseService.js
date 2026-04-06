@@ -9,13 +9,16 @@ import { sendEmail } from './emailService.js';
  * Auto-close all open shifts at 6:00 PM daily
  */
 export const startShiftAutoCloseScheduler = () => {
-  // Schedule job to run every day at 6:00 PM (18:00)
-  cron.schedule('0 18 * * *', async () => {
-    console.log('⏰ Running automatic shift closing at 6:00 PM...');
+  // Schedule job to run every day at 6:00 PM IST (12:30 PM UTC)
+  // CRITICAL: Use IST timezone explicitly so shifts close at correct Indian time
+  cron.schedule('30 12 * * *', async () => {
+    console.log('⏰ Running automatic shift closing at 6:00 PM IST...');
     await autoCloseAllOpenShifts();
+  }, {
+    timezone: 'Asia/Kolkata'
   });
 
-  console.log('✅ Shift auto-close scheduler started (Daily at 6:00 PM)');
+  console.log('✅ Shift auto-close scheduler started (Daily at 6:00 PM IST)');
 };
 
 /**
@@ -288,7 +291,7 @@ const sendShiftCloseEmail = async (shift, payments) => {
 /**
  * Send admin notification when shift variance is significant
  */
-const sendAdminVarianceNotification = async (shift, payments, variance) => {
+export const sendAdminVarianceNotification = async (shift, payments, variance) => {
   try {
     // Import dynamically to avoid circular dependency
     const { sendEmail } = await import('./emailService.js');
