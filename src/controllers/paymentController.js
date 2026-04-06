@@ -242,6 +242,33 @@ export const recordPayment = asyncHandler(async (req, res) => {
           message: `Payment amount (₹${paymentAmount}) exceeds remaining due amount (₹${remainingDue}). Total fee: ₹${totalFee}, Already paid: ₹${alreadyPaid}`
         });
       }
+
+      // CRITICAL: Prevent zero payments
+      if (paymentAmount <= 0) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Payment amount must be greater than zero'
+        });
+      }
+    }
+
+    // CRITICAL: Prevent duplicate payments (same student, same amount, within 10 seconds)
+    const tenSecondsAgo = new Date(Date.now() - 10000);
+    const duplicateCheck = await Payment.findOne({
+      studentId: student._id,
+      amount: paymentAmount,
+      paymentMethod: normalizedMethod,
+      createdAt: { $gte: tenSecondsAgo },
+      status: 'completed'
+    }).session(session);
+
+    if (duplicateCheck) {
+      await session.abortTransaction();
+      return res.status(409).json({
+        success: false,
+        message: `Duplicate payment detected. A payment of ₹${paymentAmount} was already recorded ${Math.round((Date.now() - new Date(duplicateCheck.createdAt).getTime()) / 1000)} seconds ago. Receipt: ${duplicateCheck.receiptNumber}`
+      });
     }
 
     // Get cashier details (who is recording the payment)
@@ -359,6 +386,30 @@ export const recordPayment = asyncHandler(async (req, res) => {
     await Receipt.create([receiptData], { session });
 
     await session.commitTransaction();
+
+    // CRITICAL: Log payment in audit trail
+    try {
+      const FeeAudit = (await import('../models/FeeAudit.js')).default;
+      await FeeAudit.create([{
+        admissionNumber: paymentData.admissionNumber,
+        studentId: student._id,
+        actionType: 'payment',
+        changesSummary: {
+          paymentId: createdPayment._id,
+          receiptNumber: receiptNumber,
+          amount: paymentAmount,
+          paymentMethod: normalizedMethod,
+          recordedBy: req.user.name || req.user.username,
+          shiftId: openShift?._id,
+          timestamp: new Date().toISOString()
+        },
+        performedBy: req.user._id,
+        performedByName: req.user.name || req.user.username
+      }]);
+    } catch (auditError) {
+      console.error('⚠️ Failed to create audit log:', auditError.message);
+      // Don't fail the payment if audit log fails - payment is already recorded
+    }
 
     // Send notifications (if enabled)
     if (sendEmail && paymentData.parentEmail) {

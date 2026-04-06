@@ -788,9 +788,26 @@ export const getCashierReceipts = asyncHandler(async (req, res) => {
 
 // @desc    Void transaction
 // @route   POST /api/cashier/transactions/:id/void
+// @access  Private (Admin/Owner only - NOT cashier to prevent fraud)
 export const voidTransaction = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { reason } = req.body;
+
+  // CRITICAL SECURITY: Only admin/owner can void transactions (prevent cashier fraud)
+  if (!['admin', 'owner'].includes(req.user.role)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only administrators and owners can void transactions'
+    });
+  }
+
+  // CRITICAL: Void reason is mandatory for audit trail
+  if (!reason || reason.trim().length < 5) {
+    return res.status(400).json({
+      success: false,
+      message: 'Void reason is required (minimum 5 characters) for audit purposes'
+    });
+  }
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -810,20 +827,25 @@ export const voidTransaction = asyncHandler(async (req, res) => {
 
     if (!payment) {
       await session.abortTransaction();
-      res.status(404);
-      throw new Error("Transaction not found");
-    }
-
-    if (payment.status === "cancelled") {
-      await session.abortTransaction();
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
-        message: "Transaction is already cancelled",
+        message: 'Transaction not found'
       });
     }
 
-    payment.status = "cancelled";
-    payment.voidReason = reason || "Voided by cashier";
+    if (payment.status === 'cancelled') {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Transaction is already cancelled'
+      });
+    }
+
+    // CRITICAL: Log void action for audit trail
+    console.log(`⚠️ VOID TRANSACTION: Payment ${payment.receiptNumber} (₹${payment.amount}) voided by ${req.user.name} (${req.user.role}) - Reason: ${reason}`);
+
+    payment.status = 'cancelled';
+    payment.voidReason = reason;
     payment.voidedBy = req.user._id;
     payment.voidedAt = new Date();
 
@@ -839,13 +861,24 @@ export const voidTransaction = asyncHandler(async (req, res) => {
     await payment.save({ session });
 
     if (receipt) {
-      receipt.status = "cancelled";
-      receipt.remarks = reason || "Voided by cashier";
+      receipt.status = 'cancelled';
+      receipt.remarks = reason;
       await receipt.save({ session });
     }
 
     await session.commitTransaction();
-    res.json({ success: true, message: "Transaction voided successfully", data: payment });
+    
+    res.json({
+      success: true,
+      message: 'Transaction voided successfully',
+      data: {
+        paymentId: payment._id,
+        receiptNumber: payment.receiptNumber,
+        voidedBy: req.user.name,
+        voidedAt: payment.voidedAt,
+        reason: payment.voidReason
+      }
+    });
   } catch (error) {
     await session.abortTransaction();
     throw error;
