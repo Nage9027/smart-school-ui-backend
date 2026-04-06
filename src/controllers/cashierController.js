@@ -315,7 +315,7 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     paymentMethod: tx.paymentMethod,
     status: tx.status,
     paymentDate: tx.paymentDate,
-    createdAt: tx.paymentDate,
+    createdAt: tx.paymentDate || tx.createdAt || new Date(),
     studentId: tx.studentId ? {
       personal: {
         firstName: tx.studentId.student?.firstName || "",
@@ -432,7 +432,7 @@ export const getDailyCollectionReport = asyncHandler(async (req, res) => {
     paymentMethod: p.paymentMethod ? p.paymentMethod.toLowerCase() : "other",
     status: p.status,
     paymentDate: p.paymentDate,
-    createdAt: p.paymentDate, // Map paymentDate to createdAt for frontend compatibility
+    createdAt: p.paymentDate || p.createdAt || new Date(), // Map paymentDate to createdAt for frontend compatibility, fallback to createdAt or now
     studentId: p.studentId ? {
       personal: {
         firstName: p.studentId.student?.firstName || p.studentName?.split(" ")[0] || "",
