@@ -393,15 +393,26 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
 // @route   GET /api/cashier/daily-report
 export const getDailyCollectionReport = asyncHandler(async (req, res) => {
   const { date } = req.query;
+
+  // CRITICAL FIX: Use IST timezone (UTC+5:30) for date calculations
+  // This ensures the report shows correct Indian dates
   const reportDate = date ? new Date(date) : new Date();
-  
-  // FIXED: Use UTC date ranges to match how dates are stored in MongoDB
-  const year = reportDate.getUTCFullYear();
-  const month = reportDate.getUTCMonth();
-  const day = reportDate.getUTCDate();
-  
-  const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-  const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+
+  // Convert to IST for date range calculation
+  const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours
+  const istReportDate = new Date(reportDate.getTime() + istOffset);
+
+  const year = istReportDate.getUTCFullYear();
+  const month = istReportDate.getUTCMonth();
+  const day = istReportDate.getUTCDate();
+
+  // IST start/end of day, converted back to UTC for MongoDB query
+  const startOfDayIST = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const endOfDayIST = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+
+  // Convert IST range back to UTC for MongoDB (subtract 5.5 hours)
+  const startOfDay = new Date(startOfDayIST.getTime() - istOffset);
+  const endOfDay = new Date(endOfDayIST.getTime() - istOffset);
 
   const prevDayStart = new Date(startOfDay); prevDayStart.setUTCDate(prevDayStart.getUTCDate() - 1);
   const prevDayEnd = new Date(endOfDay); prevDayEnd.setUTCDate(prevDayEnd.getUTCDate() - 1);
