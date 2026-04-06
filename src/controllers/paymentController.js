@@ -286,6 +286,7 @@ export const recordPayment = asyncHandler(async (req, res) => {
 
       feesPaid: feesPaid || [],
       recordedBy: req.user._id,
+      recordedByName: req.user.name || req.user.username || 'System',
       cashierName: cashier ? `${cashier.firstName} ${cashier.lastName}` : req.user.name,
       cashierId: cashier?._id,
       

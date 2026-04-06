@@ -18,42 +18,44 @@ import {
 // @route   GET /api/cashier/dashboard
 export const getDashboardStats = asyncHandler(async (req, res) => {
   const now = new Date();
-  
-  // FIXED: Use UTC date ranges to match how dates are stored in MongoDB
-  // When frontend sends "2026-03-16", it becomes 2026-03-16T00:00:00.000Z in UTC
+
+  // Create UTC date range for today
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();
   const day = now.getUTCDate();
-  
-  // Create UTC date range for today (00:00:00 to 23:59:59.999 in UTC)
   const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
   const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
-  
-  // Create UTC date range for current month
   const startOfMonth = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
   const endOfMonth = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
 
-  // FIXED: Use paymentDate instead of createdAt to match Payment History API
-  // FIXED: Use correct status values - "completed" for receipts, "paid" for payments
+  // CRITICAL FIX: Filter by cashier to ensure each cashier sees ONLY their own data
+  const cashier = await Cashier.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] });
+  const cashierFilter = cashier
+    ? { $or: [{ recordedBy: req.user._id }, { cashierId: cashier._id }] }
+    : { recordedBy: req.user._id }; // Fallback if no cashier profile
+
+  // Add cashier filter to all payment queries
   const [todayByMode, receiptCount, monthlyAgg, recentTransactions, weeklyAgg] = await Promise.all([
     Payment.aggregate([
       { $match: {
           paymentDate: { $gte: startOfDay, $lte: endOfDay },
-          status: { $in: ["paid", "completed"] }
+          status: { $in: ["paid", "completed"] },
+          ...cashierFilter
         }
       },
       { $group: { _id: "$paymentMethod", total: { $sum: { $ifNull: ["$amount", "$netAmount"] } }, count: { $sum: 1 } } }
     ]),
-    Payment.countDocuments({ paymentDate: { $gte: startOfDay, $lte: endOfDay } }),
+    Payment.countDocuments({ paymentDate: { $gte: startOfDay, $lte: endOfDay }, ...cashierFilter }),
     Payment.aggregate([
       { $match: {
           paymentDate: { $gte: startOfMonth, $lte: endOfMonth },
-          status: { $in: ["paid", "completed"] }
+          status: { $in: ["paid", "completed"] },
+          ...cashierFilter
         }
       },
       { $group: { _id: null, total: { $sum: { $ifNull: ["$amount", "$netAmount"] } } } }
     ]),
-    Payment.find({ status: { $in: ["paid", "completed"] } })
+    Payment.find({ status: { $in: ["paid", "completed"] }, ...cashierFilter })
       .populate("studentId", "student class admissionNumber parents")
       .sort({ paymentDate: -1 })
       .limit(10)
@@ -61,7 +63,8 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     Payment.aggregate([
       { $match: {
           paymentDate: { $gte: new Date(startOfDay.getTime() - 7 * 24 * 60 * 60 * 1000) },
-          status: { $in: ["paid", "completed"] }
+          status: { $in: ["paid", "completed"] },
+          ...cashierFilter
         }
       },
       {
@@ -457,9 +460,9 @@ export const getDailyCollectionReport = asyncHandler(async (req, res) => {
       description: b.category || b.name,
       amount: b.amount
     })),
-    receivedBy: { 
-      _id: req.user?._id || "cashier1", 
-      name: req.user?.name || "Nagendra Daddanala" 
+    receivedBy: {
+      _id: p.collectedBy || p.recordedBy || "unknown",
+      name: p.cashierName || p.recordedByName || "Unknown"
     }
   }));
 
@@ -562,8 +565,9 @@ export const getCashierReceipts = asyncHandler(async (req, res) => {
     $or: [{ collectedBy: req.user._id }, { recordedBy: req.user._id }],
   };
 
-  if (cashier?.employeeId) {
-    query.$or.push({ cashierId: cashier.employeeId });
+  // FIX: Use cashier._id (ObjectId) instead of employeeId (string)
+  if (cashier?._id) {
+    query.$or.push({ cashierId: cashier._id });
   }
 
   if (fromDate || toDate) {
@@ -739,9 +743,9 @@ export const getCashierReceipts = asyncHandler(async (req, res) => {
       description: b.category || b.name,
       amount: b.amount
     })),
-    receivedBy: { 
-      _id: p.collectedBy || p.recordedBy || "cashier1", 
-      name: p.cashierName || p.recordedByName || "Unknown" 
+    receivedBy: {
+      _id: p.collectedBy || p.recordedBy || "unknown",
+      name: p.cashierName || p.recordedByName || "Unknown"
     }
   }));
 

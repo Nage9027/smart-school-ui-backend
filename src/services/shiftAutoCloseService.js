@@ -43,10 +43,19 @@ const autoCloseAllOpenShifts = async () => {
           .filter(p => p.paymentMethod === 'cash')
           .reduce((sum, p) => sum + p.amount, 0);
         const onlineAmount = payments
-          .filter(p => ['online', 'upi'].includes(p.paymentMethod))
+          .filter(p => p.paymentMethod === 'online')
+          .reduce((sum, p) => sum + p.amount, 0);
+        const upiAmount = payments
+          .filter(p => p.paymentMethod === 'upi')
           .reduce((sum, p) => sum + p.amount, 0);
         const chequeAmount = payments
           .filter(p => ['cheque', 'dd'].includes(p.paymentMethod))
+          .reduce((sum, p) => sum + p.amount, 0);
+        const cardAmount = payments
+          .filter(p => p.paymentMethod === 'card')
+          .reduce((sum, p) => sum + p.amount, 0);
+        const bankTransferAmount = payments
+          .filter(p => p.paymentMethod === 'bank-transfer')
           .reduce((sum, p) => sum + p.amount, 0);
 
         // Update shift with final totals
@@ -55,17 +64,19 @@ const autoCloseAllOpenShifts = async () => {
         shift.cashInHand = cashAmount;
         shift.variance = totalAmount - cashAmount;
         shift.status = 'closed';
-        shift.notes = shift.notes 
+        shift.notes = shift.notes
           ? `${shift.notes}\n\n[Auto-closed at 6:00 PM by system]`
           : '[Auto-closed at 6:00 PM by system]';
-        
+
         shift.transactions = {
           count: payments.length,
           totalAmount: totalAmount,
           cash: cashAmount,
           online: onlineAmount,
-          upi: 0,
-          cheque: chequeAmount
+          upi: upiAmount,
+          cheque: chequeAmount,
+          card: cardAmount,
+          bankTransfer: bankTransferAmount
         };
 
         await shift.save();

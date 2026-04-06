@@ -93,7 +93,7 @@ const paymentSchema = new mongoose.Schema(
     // Payment Method
     paymentMethod: {
       type: String,
-      enum: ["cash", "cheque", "online", "upi", "card", "bank-transfer"],
+      enum: ["cash", "cheque", "dd", "online", "upi", "card", "bank-transfer"],
       default: "cash",
     },
     
