@@ -406,7 +406,7 @@ export const closeShift = asyncHandler(async (req, res) => {
   const shift = await ShiftSession.findOne({
     _id: shiftId,
     cashier: cashier._id,
-  });
+  }).populate('cashier', 'email firstName lastName');
 
   if (!shift) {
     return res.status(404).json({
@@ -422,15 +422,37 @@ export const closeShift = asyncHandler(async (req, res) => {
     });
   }
 
+  // CRITICAL FIX: Recalculate expected cash from actual payments
+  const Payment = (await import('../models/Payment.js')).default;
+  const payments = await Payment.find({ shiftId, status: 'completed' });
+  const expectedCash = payments
+    .filter(p => p.paymentMethod === 'cash')
+    .reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  // Calculate variance: expected cash vs actual cash in hand
+  const actualCash = Number(cashInHand || 0);
+  const calculatedVariance = expectedCash - actualCash;
+
   shift.closingTime = new Date();
   shift.closingBalance = closingBalance || 0;
-  shift.cashInHand = cashInHand || 0;
-  shift.variance = variance ?? (Number(closingBalance || 0) - Number(cashInHand || 0));
+  shift.cashInHand = actualCash;
+  shift.variance = calculatedVariance; // Use calculated variance
   shift.notes = notes;
   shift.status = "closed";
   shift.closedBy = req.user._id;
 
   await shift.save();
+
+  // CRITICAL: Send admin notification if variance is significant
+  try {
+    const varianceThreshold = 500; // Notify admin if variance > ₹500
+    if (Math.abs(calculatedVariance) > varianceThreshold) {
+      const { sendAdminVarianceNotification } = await import('../services/shiftAutoCloseService.js');
+      await sendAdminVarianceNotification(shift, payments, calculatedVariance);
+    }
+  } catch (error) {
+    console.error('❌ Error sending admin variance notification:', error.message);
+  }
 
   res.json({
     success: true,

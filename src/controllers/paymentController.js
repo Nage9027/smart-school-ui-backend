@@ -245,9 +245,19 @@ export const recordPayment = asyncHandler(async (req, res) => {
     }
 
     // Get cashier details (who is recording the payment)
-    const cashier = await Cashier.findOne({ 
+    const cashier = await Cashier.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }]
     }).session(session);
+
+    // CRITICAL: Require open shift for payment recording (strict mode)
+    const openShift = cashier ? await getOpenShiftForCashier(cashier._id, session) : null;
+    if (!openShift) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'No open shift found. Please open a shift before recording payments.'
+      });
+    }
 
     // Generate receipt number
     const timestamp = Date.now();

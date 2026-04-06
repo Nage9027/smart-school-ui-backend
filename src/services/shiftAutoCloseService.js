@@ -87,6 +87,12 @@ const autoCloseAllOpenShifts = async () => {
         if (shift.cashier?.email) {
           await sendShiftCloseEmail(shift, payments);
         }
+
+        // CRITICAL FIX: Send admin notification if variance is significant
+        const varianceThreshold = 500; // Notify admin if variance > ₹500
+        if (Math.abs(variance) > varianceThreshold) {
+          await sendAdminVarianceNotification(shift, payments, variance);
+        }
       } catch (error) {
         console.error(`❌ Error closing shift ${shift._id}:`, error.message);
       }
@@ -276,6 +282,65 @@ const sendShiftCloseEmail = async (shift, payments) => {
     console.log(`📧 Email sent to ${cashierEmail} for shift closure`);
   } catch (error) {
     console.error('❌ Error sending shift close email:', error.message);
+  }
+};
+
+/**
+ * Send admin notification when shift variance is significant
+ */
+const sendAdminVarianceNotification = async (shift, payments, variance) => {
+  try {
+    // Import dynamically to avoid circular dependency
+    const { sendEmail } = await import('./emailService.js');
+    const User = (await import('../models/User.js')).default;
+
+    // Find all admin/owner users
+    const adminUsers = await User.find({
+      role: { $in: ['admin', 'owner'] },
+      active: true
+    }).select('email name');
+
+    if (adminUsers.length === 0) {
+      console.log('⚠️ No admin users found for variance notification');
+      return;
+    }
+
+    const varianceType = variance > 0 ? 'SHORTAGE' : 'EXCESS';
+    const varianceAmount = Math.abs(variance);
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #dc2626;">⚠️ Shift Variance Alert</h2>
+        <p><strong>Cashier:</strong> ${shift.cashier?.email || 'Unknown'}</p>
+        <p><strong>Shift Date:</strong> ${new Date(shift.shiftDate).toLocaleDateString('en-IN')}</p>
+        <p><strong>Variance Type:</strong> <span style="color: #dc2626; font-weight: bold;">${varianceType}</span></p>
+        <p><strong>Variance Amount:</strong> <span style="color: #dc2626; font-weight: bold; font-size: 18px;">₹${varianceAmount.toLocaleString('en-IN')}</span></p>
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+        <h3>Shift Summary</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Total Collected</strong></td><td style="padding: 8px; border: 1px solid #ddd;">₹${shift.transactions.totalAmount.toLocaleString('en-IN')}</td></tr>
+          <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Cash</strong></td><td style="padding: 8px; border: 1px solid #ddd;">₹${shift.transactions.cash.toLocaleString('en-IN')}</td></tr>
+          <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Online/UPI</strong></td><td style="padding: 8px; border: 1px solid #ddd;">₹${(shift.transactions.online + shift.transactions.upi).toLocaleString('en-IN')}</td></tr>
+          <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Cheque/DD</strong></td><td style="padding: 8px; border: 1px solid #ddd;">₹${shift.transactions.cheque.toLocaleString('en-IN')}</td></tr>
+          <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Transactions</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${shift.transactions.count}</td></tr>
+        </table>
+        <p style="margin-top: 20px; color: #666;">This is an automated notification. Please review the shift details in the admin dashboard.</p>
+      </div>
+    `;
+
+    // Send to each admin
+    for (const admin of adminUsers) {
+      if (admin.email) {
+        await sendEmail({
+          to: admin.email,
+          subject: `⚠️ Shift Variance Alert - ${varianceType} ₹${varianceAmount.toLocaleString('en-IN')}`,
+          html
+        });
+        console.log(`✅ Admin variance notification sent to ${admin.email}`);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error sending admin variance notification:', error.message);
   }
 };
 
