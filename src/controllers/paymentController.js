@@ -40,9 +40,9 @@ function validatePaymentMethodDetails(method, body) {
 
     case 'bank-transfer':
       if (!body.utrNo || body.utrNo.trim() === '') {
-        errors.push('UTR number is required for bank transfer payments');
-      } else if (!/^\d{12}$/.test(body.utrNo.trim())) {
-        errors.push('UTR number must be exactly 12 digits (NEFT/RTGS/IMPS)');
+        errors.push('Transaction reference number (UTR/RRN) is required');
+      } else if (!/^[A-Za-z0-9]{12,35}$/.test(body.utrNo.trim())) {
+        errors.push('Reference number must be 12-35 alphanumeric characters (UPI/IMPS: 12 digits, NEFT: 16, RTGS: 22, PhonePe/GPay: 20-35)');
       }
 
       if (!body.bankName || body.bankName.trim() === '') {
