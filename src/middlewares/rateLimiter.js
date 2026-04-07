@@ -103,5 +103,15 @@ export const strictRateLimiter = createRateLimiter({
 export const uploadRateLimiter = createRateLimiter({
   requests: 5,
   perMinutes: 1,
-  message: 'Too many file upload requests, please try again after a minute'
+  message: 'Too many file upload requests, please try again after a minute'     
+});
+
+/**
+ * CRITICAL: Login rate limiter - prevent brute force attacks
+ * 5 attempts per 5 minutes per IP
+ */
+export const loginRateLimiter = createRateLimiter({
+  requests: 5,
+  perMinutes: 5,
+  message: 'Too many login attempts, please try again in 5 minutes'
 });
