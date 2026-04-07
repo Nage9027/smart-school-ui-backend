@@ -334,16 +334,16 @@ export const recordPayment = asyncHandler(async (req, res) => {
     // Create payment record
     const paymentData = {
       studentId: student._id,
-      admissionNumber: student.academic?.admissionNumber || admissionNumber,
-      studentName: `${student.personal?.firstName || ''} ${student.personal?.lastName || ''}`.trim(),
-      className: student.academic?.class,
-      section: student.academic?.section,
-      parentName: student.parents?.father?.name || student.parents?.mother?.name,
-      parentPhone: student.parents?.father?.phone || student.parents?.mother?.phone,
-      parentEmail: student.parents?.father?.email || student.parents?.mother?.email,
+      admissionNumber: student.academic?.admissionNumber || student.admissionNumber || admissionNumber,
+      studentName: `${student.student?.firstName || ''} ${student.student?.lastName || ''}`.trim(),
+      className: student.class?.className || student.className || 'Unknown',
+      section: student.class?.section || student.section || 'Unknown',
+      parentName: student.parents?.father?.name || student.parents?.mother?.name || 'Unknown',
+      parentPhone: student.parents?.father?.phone || student.parents?.mother?.phone || 'Unknown',
+      parentEmail: student.parents?.father?.email || student.parents?.mother?.email || '',
 
-      // Use IST time (UTC+5:30) for Indian timezone
-      paymentDate: paymentDate ? new Date(paymentDate) : new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })),
+      // Use current time if paymentDate not provided (Date.now always stores UTC)
+      paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
       paymentMethod: normalizedMethod, // Use normalized method name
       amount: paymentAmount,
       discount: discountAmount,

@@ -29,7 +29,8 @@ export const getCollections = asyncHandler(async (req, res) => {
     const matchStage = {};
 
     // Only get receipt type payments (include installment - the standard payment type)
-    matchStage.paymentType = { $in: ['receipt', 'payment', 'installment'] };
+    // IMPORTANT: Include null/undefined to capture documents without paymentType field
+    matchStage.paymentType = { $in: ['receipt', 'payment', 'installment', null, undefined] };
     matchStage.status = { $ne: 'cancelled' };
 
     // Search filter
@@ -632,7 +633,7 @@ export const exportCollections = asyncHandler(async (req, res) => {
 
     // Build match stage
     const matchStage = {
-      paymentType: { $in: ['receipt', 'payment', 'installment'] },
+      paymentType: { $in: ['receipt', 'payment', 'installment', null, undefined] },
       status: { $ne: 'cancelled' }
     };
 
@@ -820,7 +821,7 @@ export const getCollectionsStatistics = asyncHandler(async (req, res) => {
     const overallPipeline = [
       {
         $match: {
-          paymentType: { $in: ['receipt', 'payment', 'installment'] },
+          paymentType: { $in: ['receipt', 'payment', 'installment', null, undefined] },
           status: { $ne: 'cancelled' }
         }
       },
