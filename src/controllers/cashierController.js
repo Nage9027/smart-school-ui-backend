@@ -394,37 +394,30 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
 export const getDailyCollectionReport = asyncHandler(async (req, res) => {
   const { date } = req.query;
 
-  // CRITICAL FIX: Use IST timezone (UTC+5:30) for date calculations
-  // This ensures the report shows correct Indian dates
-  const reportDate = date ? new Date(date) : new Date();
+  // CRITICAL: Use IST timezone correctly - compute IST midnight boundaries
+  const reportDate = date ? String(date) : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
-  // Convert to IST for date range calculation
-  const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours
-  const istReportDate = new Date(reportDate.getTime() + istOffset);
+  // Parse the date string and create IST boundaries
+  // reportDate is in format "YYYY-MM-DD" (IST date)
+  // IST midnight = YYYY-MM-DDT00:00:00+05:30
+  const istStart = new Date(`${reportDate}T00:00:00+05:30`); // IST midnight in UTC
+  const istEnd = new Date(`${reportDate}T23:59:59.999+05:30`); // IST end of day in UTC
 
-  const year = istReportDate.getUTCFullYear();
-  const month = istReportDate.getUTCMonth();
-  const day = istReportDate.getUTCDate();
+  // Previous day IST boundaries
+  const prevDayStart = new Date(istStart.getTime() - 86400000); // -24 hours
+  const prevDayEnd = new Date(istEnd.getTime() - 86400000);
 
-  // IST start/end of day, converted back to UTC for MongoDB query
-  const startOfDayIST = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-  const endOfDayIST = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
-
-  // Convert IST range back to UTC for MongoDB (subtract 5.5 hours)
-  const startOfDay = new Date(startOfDayIST.getTime() - istOffset);
-  const endOfDay = new Date(endOfDayIST.getTime() - istOffset);
-
-  const prevDayStart = new Date(startOfDay); prevDayStart.setUTCDate(prevDayStart.getUTCDate() - 1);
-  const prevDayEnd = new Date(endOfDay); prevDayEnd.setUTCDate(prevDayEnd.getUTCDate() - 1);
-
-  const weekStart = new Date(startOfDay); weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
-  const weekEnd = new Date(endOfDay);
+  // Week start (Monday) in IST
+  const dayOfWeek = istStart.getUTCDay();
+  const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Monday = 0
+  const weekStart = new Date(istStart.getTime() - daysSinceMonday * 86400000);
+  const weekEnd = new Date(istEnd.getTime() + (6 - daysSinceMonday) * 86400000);
 
   // FIXED: Use paymentDate instead of createdAt to match Payment History API
   // FIXED: Use correct status values - "completed" for receipts, "paid" for payments
   const [payments, prevDayPayments, weekPayments] = await Promise.all([
     Payment.find({
-      paymentDate: { $gte: startOfDay, $lte: endOfDay },
+      paymentDate: { $gte: istStart, $lte: istEnd },
       status: { $in: ["paid", "completed"] }
     })
       .populate("studentId", "student class parents admissionNumber")

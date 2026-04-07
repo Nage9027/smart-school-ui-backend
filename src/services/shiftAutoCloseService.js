@@ -9,9 +9,9 @@ import { sendEmail } from './emailService.js';
  * Auto-close all open shifts at 6:00 PM daily
  */
 export const startShiftAutoCloseScheduler = () => {
-  // Schedule job to run every day at 6:00 PM IST (12:30 PM UTC)
-  // CRITICAL: Use IST timezone explicitly so shifts close at correct Indian time
-  cron.schedule('30 12 * * *', async () => {
+  // Schedule job to run every day at 6:00 PM IST
+  // 6:00 PM IST = 12:30 PM UTC, but with timezone option we use local IST time
+  cron.schedule('0 18 * * *', async () => {
     console.log('⏰ Running automatic shift closing at 6:00 PM IST...');
     await autoCloseAllOpenShifts();
   }, {
@@ -65,11 +65,13 @@ const autoCloseAllOpenShifts = async () => {
         shift.closingTime = new Date();
         shift.closingBalance = totalAmount;
         shift.cashInHand = cashAmount;
-        shift.variance = totalAmount - cashAmount;
+        // CRITICAL: Variance = expected cash - actual cash (not total vs cash)
+        // For auto-close, we assume cash in hand = cash collected (no physical count)
+        shift.variance = 0; // Auto-close assumes no variance (cashier didn't report actual count)
         shift.status = 'closed';
         shift.notes = shift.notes
-          ? `${shift.notes}\n\n[Auto-closed at 6:00 PM by system]`
-          : '[Auto-closed at 6:00 PM by system]';
+          ? `${shift.notes}\n\n[Auto-closed at 6:00 PM IST by system. Variance set to 0 - physical cash count not provided.]`
+          : '[Auto-closed at 6:00 PM IST by system. Variance set to 0 - physical cash count not provided.]';
 
         shift.transactions = {
           count: payments.length,

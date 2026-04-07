@@ -558,8 +558,11 @@ export const updateCollectionStatus = asyncHandler(async (req, res) => {
       updateData.statusNotes = notes;
     }
 
-    // If marking as refunded, also mark related due payments
+    // If marking as refunded, also mark related due payments and log the action
     if (status === 'refunded') {
+      // CRITICAL: Log refund action for audit trail
+      console.log(`⚠️ REFUND: Receipt ${receiptNumber} (₹${payment.amount}) refunded by ${req.user.name} (${req.user.role}). Admission: ${payment.admissionNumber}`);
+
       // Find related installments and mark as pending
       await paymentsCollection.updateMany(
         {
