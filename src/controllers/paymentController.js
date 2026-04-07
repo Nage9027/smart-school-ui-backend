@@ -526,7 +526,7 @@ export const getPaymentHistory = asyncHandler(async (req, res) => {
 
   const [payments, total] = await Promise.all([
     Payment.find(query)
-      .sort({ paymentDate: -1, createdAt: -1 })
+      .sort({ createdAt: -1, paymentDate: -1 }) // CRITICAL: Sort by createdAt first (actual record time)
       .skip(skip)
       .limit(Number(limit)),
     Payment.countDocuments(query)

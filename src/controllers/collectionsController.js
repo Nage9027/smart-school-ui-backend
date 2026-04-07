@@ -21,7 +21,7 @@ export const getCollections = asyncHandler(async (req, res) => {
       collectedBy,
       page = 1,
       limit = 20,
-      sortBy = 'paymentDate',
+      sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
 
@@ -244,16 +244,19 @@ export const getCollections = asyncHandler(async (req, res) => {
     const countResult = await paymentsCollection.aggregate(countPipeline).toArray();
     const total = countResult[0]?.total || 0;
 
-    // Stage 6: Add sorting
+    // Stage 6: Add sorting - CRITICAL: Default to createdAt for proper ordering
     const sortStage = {};
-    if (sortBy === 'paymentDate') {
+    if (sortBy === 'createdAt') {
+      sortStage.createdAt = sortOrder === 'desc' ? -1 : 1;
+    } else if (sortBy === 'paymentDate') {
       sortStage.paymentDate = sortOrder === 'desc' ? -1 : 1;
     } else if (sortBy === 'amount') {
       sortStage.amount = sortOrder === 'desc' ? -1 : 1;
     } else if (sortBy === 'studentName') {
       sortStage.studentName = sortOrder === 'asc' ? 1 : -1;
     } else {
-      sortStage.paymentDate = -1;
+      // CRITICAL: Default to createdAt descending (latest first)
+      sortStage.createdAt = -1;
     }
     pipeline.push({ $sort: sortStage });
 
