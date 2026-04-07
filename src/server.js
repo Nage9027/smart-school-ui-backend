@@ -77,14 +77,17 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
+// SECURITY: Restrict CORS to known origins only
 const allowedOrigins = [
   "http://localhost:8081",
   "http://localhost:8082",
   "http://localhost:5173",
   "http://localhost:3000",
-  /^https:\/\/[\w-]+\.incl\.devtunnels\.ms$/,
-  /^https:\/\/[\w-]+\.tunnel\.cloudflare\.com$/,
+  "https://schoolerp1.netlify.app",
   process.env.FRONTEND_URL,
+  // SECURITY: Uncomment tunnel URLs only during development
+  // /^https:\/\/[\w-]+\.incl\.devtunnels\.ms$/,
+  // /^https:\/\/[\w-]+\.tunnel\.cloudflare\.com$/,
 ].filter(Boolean);
 
 const isAllowedOrigin = (origin) => {
@@ -213,8 +216,9 @@ app.set("io", io);
 /* =========================
    BODY PARSER
 ========================= */
-app.use(express.json({ limit: "100mb" }));
-app.use(express.urlencoded({ extended: true, limit: "100mb" }));
+// SECURITY: Limit body size to prevent DoS attacks
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 /* =========================
    CORS
@@ -494,6 +498,28 @@ const startServer = async () => {
 };
 
 startServer();
+
+// ==================== GLOBAL ERROR HANDLERS ====================
+// CRITICAL: Prevent unhandled rejections from crashing the server
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
+  // Don't exit - log and continue
+});
+
+// CRITICAL: Prevent uncaught exceptions from crashing the server
+process.on("uncaughtException", (error) => {
+  console.error("❌ Uncaught Exception:", error.message);
+  console.error(error.stack);
+  // Gracefully shutdown and restart
+  server.close(() => {
+    process.exit(1);
+  });
+  // Force exit after 5 seconds if graceful shutdown fails
+  setTimeout(() => {
+    console.error("❌ Forced shutdown after timeout");
+    process.exit(1);
+  }, 5000);
+});
 
 // Graceful shutdown
 process.on("SIGTERM", () => {

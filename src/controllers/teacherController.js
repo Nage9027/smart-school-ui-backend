@@ -188,15 +188,23 @@ export const createTeacher = async (req, res) => {
         experienceYears: Number(unifiedData.experienceYears) || 0,
         qualification: unifiedData.qualification.trim()
       },
-      assignedClasses: Array.isArray(unifiedData.assignedClasses) ? 
+      assignedClasses: Array.isArray(unifiedData.assignedClasses) ?
         unifiedData.assignedClasses.map(cls => ({
           className: cls.className ? cls.className.toString().trim() : "",
           section: cls.section ? cls.section.toString().trim() : ""
         })).filter(cls => cls.className && cls.section) : [],
       attendance: 0,
       status: unifiedData.status,
-      createdBy: req.user?._id || new mongoose.Types.ObjectId('693d366ffb4683aa512565f8')
+      createdBy: req.user?._id // SECURITY: Remove hardcoded fallback - throw error if user not authenticated
     };
+
+    // SECURITY: Ensure createdBy is set
+    if (!teacherData.createdBy) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required - user not found'
+      });
+    }
 
     console.log("📝 Creating teacher...");
     const teacher = new Teacher(teacherData);

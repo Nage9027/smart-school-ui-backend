@@ -5,6 +5,7 @@ import FeeStructure from "../models/FeeStructure.js";
 import Receipt from "../models/Receipt.js";
 import Student from "../models/Student.js";
 import mongoose from "mongoose";
+import crypto from "crypto";
 import { convertToWords } from "../utils/numberToWords.js";
 
 const normalizeReceiptNumber = (value = '') => {
@@ -364,10 +365,10 @@ export const recordPayment = asyncHandler(async (req, res) => {
     const className = student.class?.className || 'Unknown';
     const section = student.class?.section || 'A';
 
-    // Generate unique receipt number
+    // SECURITY: Generate unique receipt number using crypto UUID instead of Math.random
     const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000);
-    const receiptNumber = `REC-${timestamp}-${random}`;
+    const uniqueId = crypto.randomUUID().split('-')[0]; // First 8 chars of UUID
+    const receiptNumber = `REC-${timestamp}-${uniqueId}`;
 
     console.log("📄 Generated receipt number:", receiptNumber);
 
@@ -710,8 +711,8 @@ export const createFeeInstallment = asyncHandler(async (req, res) => {
     const className = student.class?.className || 'Unknown';
     const section = student.class?.section || 'A';
 
-    // Generate installment ID
-    const installmentNumber = `INST-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    // SECURITY: Generate installment ID using crypto UUID instead of Math.random
+    const installmentNumber = `INST-${Date.now()}-${crypto.randomUUID().split('-')[0]}`;
 
     const db = mongoose.connection.db;
     const paymentsCollection = db.collection('payments');
