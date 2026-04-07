@@ -184,6 +184,11 @@ paymentSchema.index({ paymentMethod: 1 });
 paymentSchema.index({ transactionId: 1 });
 paymentSchema.index({ utrNo: 1 });
 
+// CRITICAL: Add indexes for shift reconciliation and duplicate prevention
+paymentSchema.index({ shiftId: 1, status: 1 }); // Shift reconciliation
+paymentSchema.index({ studentId: 1, amount: 1, paymentMethod: 1, createdAt: -1 }); // Duplicate detection
+paymentSchema.index({ receiptNumber: 1 }, { unique: true, sparse: true }); // Ensure unique receipts
+
 // Pre-save middleware to calculate dueAmount if not set
 paymentSchema.pre("save", function (next) {
   if (this.isModified("totalAmount") || this.isModified("paidAmount")) {

@@ -7,6 +7,7 @@ import Cashier from '../models/Cashier.js';
 import ShiftSession from '../models/ShiftSession.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import mongoose from 'mongoose';
+import crypto from 'crypto';
 import {
   applyPaymentToFeeStructure,
   reversePaymentFromFeeStructure,
@@ -325,10 +326,10 @@ export const recordPayment = asyncHandler(async (req, res) => {
       });
     }
 
-    // Generate receipt number
+    // Generate cryptographically secure receipt number
     const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000);
-    const receiptNumber = `REC-${timestamp}-${random}`;
+    const randomHex = crypto.randomBytes(4).toString('hex'); // 8 hex chars
+    const receiptNumber = `REC-${timestamp}-${randomHex}`;
 
     // Create payment record
     const paymentData = {

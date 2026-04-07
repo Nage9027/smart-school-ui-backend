@@ -485,6 +485,14 @@ export const exportStatement = asyncHandler(async (req, res) => {
   const transactions = payments.map(mapPaymentToStatementTransaction);
 
   if (format === "csv") {
+    // CRITICAL: CSV injection prevention
+    const sanitizeCSV = (val) => {
+      const str = String(val ?? '').replace(/"/g, '""');
+      // Prevent CSV injection (Excel formula execution)
+      if (/^[=+\-@]/.test(str)) return "'" + str;
+      return str;
+    };
+
     const csvRows = [
       ["Receipt No", "Date", "Student Name", "Class", "Admission No", "Fee Type", "Payment Method", "Amount", "Status"],
     ];
@@ -503,7 +511,7 @@ export const exportStatement = asyncHandler(async (req, res) => {
       ]);
     });
 
-    const csvContent = csvRows.map((row) => row.join(",")).join("\n");
+    const csvContent = csvRows.map((row) => row.map(cell => `"${sanitizeCSV(cell)}"`).join(",")).join("\n");
 
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(

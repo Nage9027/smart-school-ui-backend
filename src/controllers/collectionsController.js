@@ -774,8 +774,16 @@ export const exportCollections = asyncHandler(async (req, res) => {
       collection.description || ''
     ]);
 
+    // CRITICAL: CSV injection prevention - sanitize fields starting with =, +, -, @
+    const sanitizeCSV = (val) => {
+      const str = String(val).replace(/"/g, '""');
+      // Prevent CSV injection (Excel formula execution)
+      if (/^[=+\-@]/.test(str)) return "'" + str;
+      return str;
+    };
+
     const csvContent = [headers, ...rows]
-      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .map(row => row.map(cell => `"${sanitizeCSV(cell)}"`).join(','))
       .join('\n');
 
     // Set response headers
