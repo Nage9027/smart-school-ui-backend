@@ -410,6 +410,34 @@ export const getCollections = asyncHandler(async (req, res) => {
   }
 });
 
+// @desc    Get unique class names for filter dropdown
+// @route   GET /api/finance/collections/classes
+// @access  Private (Admin/Finance)
+export const getCollectionClasses = asyncHandler(async (req, res) => {
+  const db = mongoose.connection.db;
+  const paymentsCollection = db.collection('payments');
+
+  // Get unique class names using aggregation
+  const classes = await paymentsCollection.aggregate([
+    { $match: { status: { $ne: 'cancelled' } } },
+    { $group: { _id: '$className' } },
+    { $sort: { _id: 1 } }
+  ]).toArray();
+
+  // Filter out null/empty class names and return clean array
+  const uniqueClasses = classes
+    .map(c => c._id)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  res.json({
+    success: true,
+    data: {
+      classes: uniqueClasses
+    }
+  });
+});
+
 // @desc    Get collection details
 // @route   GET /api/finance/collections/:receiptNumber
 // @access  Private (Admin/Finance)
