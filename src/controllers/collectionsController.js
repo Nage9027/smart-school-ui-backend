@@ -88,12 +88,15 @@ export const getCollections = asyncHandler(async (req, res) => {
       }
     }
 
-    // Collected by filter
+    // Collected by filter - CRITICAL FIX: Use $and to avoid overwriting search filter
     if (collectedBy && collectedBy !== 'All Collectors') {
-      matchStage.$or = [
-        { recordedByName: { $regex: collectedBy, $options: 'i' } },
-        { recordedBy: collectedBy }
-      ];
+      if (!matchStage.$and) matchStage.$and = [];
+      matchStage.$and.push({
+        $or: [
+          { recordedByName: { $regex: collectedBy, $options: 'i' } },
+          { recordedBy: collectedBy }
+        ]
+      });
     }
 
     const db = mongoose.connection.db;
