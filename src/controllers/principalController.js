@@ -367,27 +367,108 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
   const last7 = new Date(); last7.setDate(last7.getDate() - 7); last7.setHours(0, 0, 0, 0);
   const last30 = new Date(); last30.setDate(last30.getDate() - 30); last30.setHours(0, 0, 0, 0);
 
+  const attendanceMatch = { date: { $gte: today, $lte: endToday } };
+  if (cls) attendanceMatch.className = String(cls);
+  if (section) attendanceMatch.section = String(section);
+
   const [weeklyAttendance, classWiseTodayRaw, lowAttendanceRaw, totalStudents, teachers] = await Promise.all([
     Attendance.aggregate([
       { $match: { date: { $gte: last7 } } },
       { $group: { 
           _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, 
-          present: { $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] } },
-          total: { $sum: 1 }
+          presentSessions: {
+            $sum: {
+              $add: [
+                { $cond: [{ $eq: ["$sessions.morning", "present"] }, 1, 0] },
+                { $cond: [{ $eq: ["$sessions.afternoon", "present"] }, 1, 0] }
+              ]
+            }
+          },
+          totalSessions: { $sum: 2 }
         } 
       },
-      { $addFields: { percentage: { $round: [{ $multiply: [{ $divide: ["$present", "$total"] }, 100] }, 1] } } },
+      {
+        $addFields: {
+          present: "$presentSessions",
+          total: "$totalSessions",
+          percentage: {
+            $round: [
+              {
+                $multiply: [
+                  {
+                    $cond: [
+                      { $gt: ["$totalSessions", 0] },
+                      { $divide: ["$presentSessions", "$totalSessions"] },
+                      0
+                    ]
+                  },
+                  100
+                ]
+              },
+              1
+            ]
+          }
+        }
+      },
       { $sort: { _id: 1 } }
     ]),
     Attendance.aggregate([
-      { $match: { date: { $gte: today, $lte: endToday } } },
-      { $lookup: { from: "students", localField: "studentId", foreignField: "_id", as: "student" } },
-      { $unwind: { path: "$student", preserveNullAndEmptyArrays: true } },
+      { $match: attendanceMatch },
       {
         $group: {
-          _id: { class: "$student.academic.class", section: "$student.academic.section" },
-          present: { $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] } },
-          absent: { $sum: { $cond: [{ $eq: ["$status", "absent"] }, 1, 0] } },
+          _id: { class: "$className", section: "$section" },
+          present: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$sessions.morning", "present"] },
+                    { $eq: ["$sessions.afternoon", "present"] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          },
+          absent: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$sessions.morning", "absent"] },
+                    { $eq: ["$sessions.afternoon", "absent"] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          },
+          late: {
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    {
+                      $and: [
+                        { $eq: ["$sessions.morning", "present"] },
+                        { $eq: ["$sessions.afternoon", "absent"] }
+                      ]
+                    },
+                    {
+                      $and: [
+                        { $eq: ["$sessions.morning", "absent"] },
+                        { $eq: ["$sessions.afternoon", "present"] }
+                      ]
+                    }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          },
           total: { $sum: 1 }
         }
       },
@@ -395,18 +476,42 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
     ]),
     Attendance.aggregate([
       { $match: { date: { $gte: last30 } } },
-      { $group: { _id: "$studentId", present: { $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] } }, total: { $sum: 1 } } },
-      { $match: { $expr: { $lt: [{ $divide: ["$present", "$total"] }, 0.75] } } },
+      {
+        $group: {
+          _id: "$studentId",
+          presentSessions: {
+            $sum: {
+              $add: [
+                { $cond: [{ $eq: ["$sessions.morning", "present"] }, 1, 0] },
+                { $cond: [{ $eq: ["$sessions.afternoon", "present"] }, 1, 0] }
+              ]
+            }
+          },
+          totalSessions: { $sum: 2 }
+        }
+      },
+      {
+        $addFields: {
+          attendanceRatio: {
+            $cond: [
+              { $gt: ["$totalSessions", 0] },
+              { $divide: ["$presentSessions", "$totalSessions"] },
+              0
+            ]
+          }
+        }
+      },
+      { $match: { attendanceRatio: { $lt: 0.75 } } },
       { $lookup: { from: "students", localField: "_id", foreignField: "_id", as: "student" } },
       { $unwind: { path: "$student", preserveNullAndEmptyArrays: true } },
       {
         $project: {
-          name: { $concat: [{ $ifNull: ["$student.personal.firstName", ""] }, " ", { $ifNull: ["$student.personal.lastName", ""] }] },
-          class: "$student.academic.class",
-          section: "$student.academic.section",
-          attendanceRate: { $multiply: [{ $divide: ["$present", "$total"] }, 100] },
-          present: 1,
-          total: 1,
+          name: { $concat: [{ $ifNull: ["$student.student.firstName", ""] }, " ", { $ifNull: ["$student.student.lastName", ""] }] },
+          class: "$student.class.className",
+          section: "$student.class.section",
+          attendanceRate: { $multiply: ["$attendanceRatio", 100] },
+          present: "$presentSessions",
+          total: "$totalSessions",
           parentPhone: { $ifNull: ["$student.parents.father.phone", "$student.parents.mother.phone", ""] }
         }
       },
@@ -423,6 +528,7 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
       const total = Number(row.total || 0);
       const present = Number(row.present || 0);
       const absent = Number(row.absent || 0);
+      const late = Number(row.late || 0);
       const percentage = total > 0 ? Number(((present / total) * 100).toFixed(1)) : 0;
 
       let status = "poor";
@@ -436,7 +542,7 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
         total,
         present,
         absent,
-        late: 0,
+        late,
         leave: 0,
         percentage,
         teacher: "",
@@ -496,9 +602,11 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
   const todayStats = classWiseToday.reduce((acc, curr) => {
     acc.present += curr.present || 0;
     acc.absent += curr.absent || 0;
+    acc.late += curr.late || 0;
+    acc.leave += curr.leave || 0;
     acc.total += curr.total || 0;
     return acc;
-  }, { present: 0, absent: 0, total: 0 });
+  }, { present: 0, absent: 0, late: 0, leave: 0, total: 0 });
 
   res.json({
     success: true,
@@ -507,7 +615,8 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
         totalStudents: totalStudents,
         presentToday: todayStats.present,
         absentToday: todayStats.absent,
-        onLeaveToday: totalStudents - todayStats.present - todayStats.absent,
+        lateToday: todayStats.late,
+        onLeaveToday: todayStats.leave,
         percentage: todayStats.total > 0 ? Number(((todayStats.present / todayStats.total) * 100).toFixed(1)) : 0,
         teacherPresent: teacherWise.filter((t) => t.status === "present").length,
         teacherAbsent: teacherWise.filter((t) => t.status === "absent").length,
