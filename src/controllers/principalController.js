@@ -382,34 +382,43 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
   if (cls) attendanceMatch.className = String(cls);
   if (section) attendanceMatch.section = String(section);
 
+  const weeklyMatch = { date: { $gte: last7, $lte: endToday } };
+  if (cls) weeklyMatch.className = String(cls);
+  if (section) weeklyMatch.section = String(section);
+
   const [weeklyAttendance, classWiseTodayRaw, lowAttendanceRaw, totalStudents, teachers] = await Promise.all([
     Attendance.aggregate([
-      { $match: { date: { $gte: last7 } } },
-      { $group: { 
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, 
-          presentSessions: {
+      { $match: weeklyMatch },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          present: {
             $sum: {
-              $add: [
-                { $cond: [{ $eq: ["$sessions.morning", "present"] }, 1, 0] },
-                { $cond: [{ $eq: ["$sessions.afternoon", "present"] }, 1, 0] }
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$sessions.morning", "present"] },
+                    { $eq: ["$sessions.afternoon", "present"] }
+                  ]
+                },
+                1,
+                0
               ]
             }
           },
-          totalSessions: { $sum: 2 }
-        } 
+          total: { $sum: 1 }
+        }
       },
       {
         $addFields: {
-          present: "$presentSessions",
-          total: "$totalSessions",
           percentage: {
             $round: [
               {
                 $multiply: [
                   {
                     $cond: [
-                      { $gt: ["$totalSessions", 0] },
-                      { $divide: ["$presentSessions", "$totalSessions"] },
+                      { $gt: ["$total", 0] },
+                      { $divide: ["$present", "$total"] },
                       0
                     ]
                   },
@@ -449,30 +458,6 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
                   $and: [
                     { $eq: ["$sessions.morning", "absent"] },
                     { $eq: ["$sessions.afternoon", "absent"] }
-                  ]
-                },
-                1,
-                0
-              ]
-            }
-          },
-          late: {
-            $sum: {
-              $cond: [
-                {
-                  $or: [
-                    {
-                      $and: [
-                        { $eq: ["$sessions.morning", "present"] },
-                        { $eq: ["$sessions.afternoon", "absent"] }
-                      ]
-                    },
-                    {
-                      $and: [
-                        { $eq: ["$sessions.morning", "absent"] },
-                        { $eq: ["$sessions.afternoon", "present"] }
-                      ]
-                    }
                   ]
                 },
                 1,
@@ -539,7 +524,7 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
       const total = Number(row.total || 0);
       const present = Number(row.present || 0);
       const absent = Number(row.absent || 0);
-      const late = Number(row.late || 0);
+      const late = Math.max(total - present - absent, 0);
       const percentage = total > 0 ? Number(((present / total) * 100).toFixed(1)) : 0;
 
       let status = "poor";
