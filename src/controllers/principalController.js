@@ -357,47 +357,67 @@ export const getPrincipalProfile = asyncHandler(async (req, res) => {
 // @route   GET /api/principal/attendance
 export const getAttendanceOverview = asyncHandler(async (req, res) => {
   const { date, class: cls, section } = req.query;
-  
-  const today = new Date(date || Date.now());
-  today.setHours(0, 0, 0, 0);
-  const endToday = new Date(today);
-  endToday.setHours(23, 59, 59, 999);
 
-  const last7 = new Date(); last7.setDate(last7.getDate() - 7); last7.setHours(0, 0, 0, 0);
-  const last30 = new Date(); last30.setDate(last30.getDate() - 30); last30.setHours(0, 0, 0, 0);
+  const getUtcDayRange = (dateInput) => {
+    const base = dateInput ? new Date(dateInput) : new Date();
+    const start = new Date(base);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(base);
+    end.setUTCHours(23, 59, 59, 999);
+    return { start, end };
+  };
+
+  const { start: today, end: endToday } = getUtcDayRange(date);
+
+  const last7 = new Date(today);
+  last7.setUTCDate(last7.getUTCDate() - 7);
+  last7.setUTCHours(0, 0, 0, 0);
+
+  const last30 = new Date(today);
+  last30.setUTCDate(last30.getUTCDate() - 30);
+  last30.setUTCHours(0, 0, 0, 0);
 
   const attendanceMatch = { date: { $gte: today, $lte: endToday } };
   if (cls) attendanceMatch.className = String(cls);
   if (section) attendanceMatch.section = String(section);
 
+  const weeklyMatch = { date: { $gte: last7, $lte: endToday } };
+  if (cls) weeklyMatch.className = String(cls);
+  if (section) weeklyMatch.section = String(section);
+
   const [weeklyAttendance, classWiseTodayRaw, lowAttendanceRaw, totalStudents, teachers] = await Promise.all([
     Attendance.aggregate([
-      { $match: { date: { $gte: last7 } } },
-      { $group: { 
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, 
-          presentSessions: {
+      { $match: weeklyMatch },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          present: {
             $sum: {
-              $add: [
-                { $cond: [{ $eq: ["$sessions.morning", "present"] }, 1, 0] },
-                { $cond: [{ $eq: ["$sessions.afternoon", "present"] }, 1, 0] }
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$sessions.morning", "present"] },
+                    { $eq: ["$sessions.afternoon", "present"] }
+                  ]
+                },
+                1,
+                0
               ]
             }
           },
-          totalSessions: { $sum: 2 }
-        } 
+          total: { $sum: 1 }
+        }
       },
       {
         $addFields: {
-          present: "$presentSessions",
-          total: "$totalSessions",
           percentage: {
             $round: [
               {
                 $multiply: [
                   {
                     $cond: [
-                      { $gt: ["$totalSessions", 0] },
-                      { $divide: ["$presentSessions", "$totalSessions"] },
+                      { $gt: ["$total", 0] },
+                      { $divide: ["$present", "$total"] },
                       0
                     ]
                   },
@@ -437,30 +457,6 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
                   $and: [
                     { $eq: ["$sessions.morning", "absent"] },
                     { $eq: ["$sessions.afternoon", "absent"] }
-                  ]
-                },
-                1,
-                0
-              ]
-            }
-          },
-          late: {
-            $sum: {
-              $cond: [
-                {
-                  $or: [
-                    {
-                      $and: [
-                        { $eq: ["$sessions.morning", "present"] },
-                        { $eq: ["$sessions.afternoon", "absent"] }
-                      ]
-                    },
-                    {
-                      $and: [
-                        { $eq: ["$sessions.morning", "absent"] },
-                        { $eq: ["$sessions.afternoon", "present"] }
-                      ]
-                    }
                   ]
                 },
                 1,
@@ -527,7 +523,7 @@ export const getAttendanceOverview = asyncHandler(async (req, res) => {
       const total = Number(row.total || 0);
       const present = Number(row.present || 0);
       const absent = Number(row.absent || 0);
-      const late = Number(row.late || 0);
+      const late = Math.max(total - present - absent, 0);
       const percentage = total > 0 ? Number(((present / total) * 100).toFixed(1)) : 0;
 
       let status = "poor";
